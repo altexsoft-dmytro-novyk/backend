@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      # PG18 image: mount at /var/lib/postgresql (PGDATA is version-specific inside)
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      # -h 127.0.0.1 forces TCP: socket-based check can report healthy too early
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  pgdata:
