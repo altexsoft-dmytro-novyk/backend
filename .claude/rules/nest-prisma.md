@@ -13,6 +13,11 @@ paths:
 - Datasource `url` is NOT in the schema — it lives in `prisma.config.ts` (Prisma 7 requirement)
 - Do not touch the generator block: `provider = "prisma-client"`, `output = "../src/generated/prisma"`, `moduleFormat = "cjs"` (NestJS is CommonJS — ESM output breaks the build)
 
+## Modeling conventions
+
+- **No speculative audit columns.** Don't add `updatedAt`/`updatedBy` (or similar tracking fields) to a model by reflex alongside `createdAt`/`createdBy`. Only add them when a concrete, named feature will actually read or write them. A real change-history/audit-log is its own scoped feature (a real table, populated deliberately), never a couple of bolted-on columns "just in case."
+- **Event/log tables are immutable.** A table recording that something happened (e.g. `UserEvents`) stores facts, not mutable state — no `updatedAt`/`updatedBy`. "Correcting" a wrong entry is soft-deleting it (`deletedAt`) and appending a new, correct row — never an in-place field update. This applies to any append-only fact/event table, not just `UserEvents`.
+
 ## Migrations workflow
 
 1. Edit `schema.prisma`

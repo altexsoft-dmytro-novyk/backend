@@ -10,11 +10,26 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id              String    @id @default(uuid(7))
+  firstName       String
+  lastName        String
+  photo           String?
+  position        String
+  country         String
+  city            String
+  workEmail       String    @unique
+  workPhone       String?
+  birthDate       DateTime? @db.Date
+  companyJoinDate DateTime  @db.Date
+  isActive        Boolean   @default(true)
+  ttId            String?   @unique
+  // Interim jsonb bag ahead of the dynamic custom-fields system — don't build
+  // persistence assuming this shape survives (see domain-driven-design.md).
+  customFields    Json      @default("{}")
+  createdAt       DateTime  @default(now())
+  createdBy       String
+  creator         User      @relation("UserCreatedBy", fields: [createdBy], references: [id])
+  createdUsers    User[]    @relation("UserCreatedBy")
 
   @@map("users")
 }
