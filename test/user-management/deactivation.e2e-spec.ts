@@ -97,8 +97,12 @@ describe('Deactivation — DELETE /users/:id (e2e)', () => {
     });
   });
 
-  describe('um-deact-03 · deactivating a user without the HR Admin permission is denied', () => {
+  describe('um-deact-03 · deactivating a user without the deactivation capability is denied', () => {
     it('rejects with 403 and leaves isActive unchanged', async () => {
+      // Ida, not Bob (DEC-UM-002): Bob is a manager and could pass a coarse
+      // "non-HR-Admin" gate without proving capability granularity. Ida
+      // holds an unrelated functional permission and lacks the capability
+      // under test.
       const alice = await createUser({
         firstName: 'Alice',
         workEmail: emailFor('alice-deact-03'),
@@ -107,12 +111,12 @@ describe('Deactivation — DELETE /users/:id (e2e)', () => {
 
       await request(app.getHttpServer())
         .delete(`/users/${aliceId}`)
-        .set('authorization', 'Bearer <token:Bob>')
+        .set('authorization', 'Bearer <token:Ida>')
         .expect(403);
 
       const read = await request(app.getHttpServer())
         .get(`/users/${aliceId}`)
-        .set('authorization', 'Bearer <token:Bob>')
+        .set('authorization', 'Bearer <token:Ida>')
         .expect(200);
 
       const readBody = read.body as Record<string, unknown>;

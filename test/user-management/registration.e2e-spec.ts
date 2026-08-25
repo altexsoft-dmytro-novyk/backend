@@ -62,6 +62,27 @@ describe('User registration — POST /users (e2e)', () => {
     await app.close();
   });
 
+  // Shared fixture-creation helper for um-reg-06 onward, matching the
+  // convention already used by auth/career-timeline/deactivation/profile's
+  // own e2e specs — a real POST /users call, not a hardcoded row.
+  const createUser = async (
+    overrides: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> => {
+    const res = await request(app.getHttpServer())
+      .post('/users')
+      .set('authorization', 'Bearer <token:Root>')
+      .send({
+        firstName: 'Fixture',
+        lastName: 'Person',
+        position: 'Engineer',
+        country: 'Poland',
+        city: 'Warsaw',
+        companyJoinDate: '2024-01-01',
+        ...overrides,
+      });
+    return res.body as Record<string, unknown>;
+  };
+
   describe('um-reg-01 · HR Admin creates a new hire (success)', () => {
     it('creates the user, activated immediately, with no credential field', async () => {
       const workEmail = emailFor('nina');
@@ -86,9 +107,21 @@ describe('User registration — POST /users (e2e)', () => {
       expect(body.firstName).toBe('Nina');
       expect(body.lastName).toBe('Volkova');
       expect(body.workEmail).toBe(workEmail);
+      expect(body.createdBy).toBe(bootstrapUserId);
+      expect(body.customFields).toEqual({});
+      expect(body.photo).toBeNull();
+      expect(body.workPhone).toBeNull();
+      expect(body.birthDate).toBeNull();
+      expect(body.ttId).toBeNull();
       expect(Object.keys(body)).not.toEqual(
         expect.arrayContaining(['password', 'credential']),
       );
+
+      // No GET /users/:id in Story 1.1 — persistence is asserted against
+      // the datastore directly, per the doc's own stateChange note.
+      const stored = await prisma.user.findUnique({ where: { workEmail } });
+      expect(stored).not.toBeNull();
+      expect(stored?.createdBy).toBe(bootstrapUserId);
     });
   });
 
@@ -111,13 +144,16 @@ describe('User registration — POST /users (e2e)', () => {
     });
   });
 
-  describe('um-reg-03 · create user without the HR Admin permission', () => {
+  describe('um-reg-03 · create user without the user-creation permission', () => {
     it('rejects with 403 and creates no row', async () => {
+      // Ida, not a role-less persona: she holds a functional role, just not
+      // this permission — proves the gate checks the specific permission,
+      // not "any role holder" (requirements §2.3, doc's own rationale).
       const workEmail = emailFor('no-permission-attempt');
 
       await request(app.getHttpServer())
         .post('/users')
-        .set('authorization', 'Bearer <token:Colin>')
+        .set('authorization', 'Bearer <token:Ida>')
         .send({
           firstName: 'Nina',
           lastName: 'Volkova',
@@ -186,6 +222,280 @@ describe('User registration — POST /users (e2e)', () => {
       // design. It becomes observable once a real (or, per
       // nestjs-di-tokens.md, legitimately fake-able external-integration)
       // dispatcher exists to assert against.
+    });
+  });
+
+  describe('um-reg-06 · create with a missing non-nullable field is rejected', () => {
+    it('rejects with 400 and creates no row', async () => {
+      const workEmail = emailFor('missing-field');
+
+      await request(app.getHttpServer())
+        .post('/users')
+        .set('authorization', 'Bearer <token:Root>')
+        .send({
+          firstName: 'Nina',
+          lastName: 'Volkova',
+          workEmail,
+        })
+        .expect(400);
+
+      const stored = await prisma.user.findUnique({ where: { workEmail } });
+      expect(stored).toBeNull();
+    });
+  });
+
+  describe('um-reg-07 · duplicate ttId on create is rejected', () => {
+    it('rejects with 409, creates no row, and leaves the existing ttId holder untouched', async () => {
+      const ttId = `tt-${runId}`;
+      const colin = await createUser({
+        firstName: 'Colin',
+        workEmail: emailFor('colin-reg-07'),
+        ttId,
+      });
+
+      const workEmail = emailFor('nina-reg-07');
+      await request(app.getHttpServer())
+        .post('/users')
+        .set('authorization', 'Bearer <token:Root>')
+        .send({
+          firstName: 'Nina',
+          lastName: 'Volkova',
+          position: 'QA Engineer',
+          country: 'Poland',
+          city: 'Krakow',
+          workEmail,
+          companyJoinDate: '2026-09-01',
+          ttId,
+        })
+        .expect(409);
+
+      const matches = await prisma.user.findMany({ where: { ttId } });
+      expect(matches).toHaveLength(1);
+      expect(matches[0].id).toBe(colin.id);
+
+      const stored = await prisma.user.findUnique({ where: { workEmail } });
+      expect(stored).toBeNull();
+    });
+  });
+
+  describe('um-reg-08 · concurrent creates on one workEmail yield a single user', () => {
+    it('resolves to exactly one 201 and one 409, never two 201s or a 500', async () => {
+      const workEmail = emailFor('concurrent');
+      const payload = {
+        firstName: 'Nina',
+        lastName: 'Volkova',
+        position: 'QA Engineer',
+        country: 'Poland',
+        city: 'Krakow',
+        workEmail,
+        companyJoinDate: '2026-09-01',
+      };
+
+      const [first, second] = await Promise.all([
+        request(app.getHttpServer())
+          .post('/users')
+          .set('authorization', 'Bearer <token:Root>')
+          .send(payload),
+        request(app.getHttpServer())
+          .post('/users')
+          .set('authorization', 'Bearer <token:Root>')
+          .send(payload),
+      ]);
+
+      expect([first.status, second.status].sort()).toEqual([201, 409]);
+
+      const matches = await prisma.user.findMany({ where: { workEmail } });
+      expect(matches).toHaveLength(1);
+    });
+  });
+
+  describe('um-reg-09 · create with a malformed workEmail is rejected', () => {
+    it('rejects with 400 naming workEmail and creates no row', async () => {
+      const workEmail = 'nina.volkova-at-company';
+
+      await request(app.getHttpServer())
+        .post('/users')
+        .set('authorization', 'Bearer <token:Root>')
+        .send({
+          firstName: 'Nina',
+          lastName: 'Volkova',
+          position: 'QA Engineer',
+          country: 'Poland',
+          city: 'Krakow',
+          workEmail,
+          companyJoinDate: '2026-09-01',
+        })
+        .expect(400);
+
+      const stored = await prisma.user.findUnique({ where: { workEmail } });
+      expect(stored).toBeNull();
+    });
+  });
+
+  describe('um-reg-10 · server-owned create fields are rejected', () => {
+    it('Test 1 — rejects a client-supplied id with 400 and creates no row', async () => {
+      const workEmail = emailFor('server-id');
+
+      await request(app.getHttpServer())
+        .post('/users')
+        .set('authorization', 'Bearer <token:Root>')
+        .send({
+          id: '00000000-0000-7000-8000-000000000099',
+          firstName: 'Eva',
+          lastName: 'Test',
+          position: 'Engineer',
+          country: 'Poland',
+          city: 'Warsaw',
+          workEmail,
+          companyJoinDate: '2026-09-01',
+        })
+        .expect(400);
+
+      const stored = await prisma.user.findUnique({ where: { workEmail } });
+      expect(stored).toBeNull();
+    });
+
+    it('Test 2 — rejects a client-supplied createdAt/createdBy with 400 and creates no row', async () => {
+      const workEmail = emailFor('server-audit');
+
+      await request(app.getHttpServer())
+        .post('/users')
+        .set('authorization', 'Bearer <token:Root>')
+        .send({
+          firstName: 'Eva',
+          lastName: 'Test',
+          position: 'Engineer',
+          country: 'Poland',
+          city: 'Warsaw',
+          workEmail,
+          companyJoinDate: '2026-09-01',
+          createdAt: '2020-01-01T00:00:00.000Z',
+          createdBy: bootstrapUserId,
+        })
+        .expect(400);
+
+      const stored = await prisma.user.findUnique({ where: { workEmail } });
+      expect(stored).toBeNull();
+    });
+  });
+
+  describe('um-reg-11 · workEmail is normalized on write and lookup', () => {
+    it('Test 1 — trim + lowercase collides with the normalized existing address', async () => {
+      const normalizedEmail = emailFor('colin-reg-11');
+      await createUser({ firstName: 'Colin', workEmail: normalizedEmail });
+
+      await request(app.getHttpServer())
+        .post('/users')
+        .set('authorization', 'Bearer <token:Root>')
+        .send({
+          firstName: 'Dup',
+          lastName: 'Case',
+          position: 'Engineer',
+          country: 'Poland',
+          city: 'Warsaw',
+          workEmail: `  ${normalizedEmail.toUpperCase()}  `,
+          companyJoinDate: '2026-09-01',
+        })
+        .expect(409);
+
+      const matches = await prisma.user.findMany({
+        where: { workEmail: normalizedEmail },
+      });
+      expect(matches).toHaveLength(1);
+    });
+
+    it('Test 2 — a newly created workEmail persists trimmed and lowercased', async () => {
+      const rawEmail = `  ${emailFor('Nina-Reg-11').toUpperCase()}  `;
+      const expected = rawEmail.trim().toLowerCase();
+
+      const res = await request(app.getHttpServer())
+        .post('/users')
+        .set('authorization', 'Bearer <token:Root>')
+        .send({
+          firstName: 'Nina',
+          lastName: 'Volkova',
+          position: 'QA Engineer',
+          country: 'Poland',
+          city: 'Krakow',
+          workEmail: rawEmail,
+          companyJoinDate: '2026-09-01',
+        })
+        .expect(201);
+
+      const body = res.body as Record<string, unknown>;
+      expect(body.workEmail).toBe(expected);
+
+      const stored = await prisma.user.findUnique({
+        where: { workEmail: expected },
+      });
+      expect(stored).not.toBeNull();
+    });
+  });
+
+  describe('um-reg-12 · rehire preserves the existing User identity', () => {
+    it("rejects a duplicate registration for a deactivated employee's address, preserving the original id", async () => {
+      const workEmail = emailFor('colin-rehire');
+      const colin = await createUser({ firstName: 'Colin', workEmail });
+      const colinId = colin.id as string;
+
+      await request(app.getHttpServer())
+        .delete(`/users/${colinId}`)
+        .set('authorization', 'Bearer <token:Root>')
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .post('/users')
+        .set('authorization', 'Bearer <token:Root>')
+        .send({
+          firstName: 'Colin',
+          lastName: 'Return',
+          position: 'Engineer',
+          country: 'Poland',
+          city: 'Warsaw',
+          workEmail,
+          companyJoinDate: '2026-09-01',
+        })
+        .expect(409);
+
+      const matches = await prisma.user.findMany({ where: { workEmail } });
+      expect(matches).toHaveLength(1);
+      expect(matches[0].id).toBe(colinId);
+    });
+  });
+
+  describe('um-reg-13 · registration survives email transport failure', () => {
+    it('commits the user even when the outbound email transport fails after commit', async () => {
+      // The email-dispatch DI seam (an outbound port per
+      // nestjs-di-tokens.md, overridden here with a throwing fake) does not
+      // exist yet — there is no token to `.overrideProvider(...)` against,
+      // and importing one that doesn't exist would break this file's
+      // compilation for every test in it, not just this one. Once the port
+      // lands in stage 3, bind the throwing fake here and extend this test
+      // to assert the durable dispatch record is pending/failed and
+      // retryable, and that the fake recorded the attempted dispatch. Until
+      // then this covers what's observable without that seam: registration
+      // itself must not roll back.
+      const workEmail = emailFor('dispatch-failure');
+
+      const res = await request(app.getHttpServer())
+        .post('/users')
+        .set('authorization', 'Bearer <token:Root>')
+        .send({
+          firstName: 'Nina',
+          lastName: 'Volkova',
+          position: 'QA Engineer',
+          country: 'Poland',
+          city: 'Krakow',
+          workEmail,
+          companyJoinDate: '2026-09-01',
+        })
+        .expect(201);
+
+      const body = res.body as Record<string, unknown>;
+      expect(body.isActive).toBe(true);
+
+      const stored = await prisma.user.findUnique({ where: { workEmail } });
+      expect(stored).not.toBeNull();
     });
   });
 });

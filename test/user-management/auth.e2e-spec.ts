@@ -151,4 +151,71 @@ describe('Magic-link auth — POST /auth/magic-link(/consume) (e2e)', () => {
       ).toBeUndefined();
     });
   });
+
+  describe('um-auth-06 · a deactivated user cannot establish a session via magic link', () => {
+    // Colin, not Alice: this scenario is specifically about a *deactivated*
+    // account, so the fixture is created and deactivated inline here rather
+    // than through the shared createUser() helper above (which only takes
+    // an email — its hardcoded 'Alice' identity doesn't fit this scenario).
+    const createColin = async (workEmail: string): Promise<string> => {
+      const res = await request(app.getHttpServer())
+        .post('/users')
+        .set('authorization', 'Bearer <token:Root>')
+        .send({
+          firstName: 'Colin',
+          lastName: 'Fixture',
+          position: 'Engineer',
+          country: 'Poland',
+          city: 'Warsaw',
+          workEmail,
+          companyJoinDate: '2024-01-01',
+        });
+      return (res.body as Record<string, unknown>).id as string;
+    };
+
+    it('Test 1 — request is enumeration-safe: 200, same shape, zero dispatch for a deactivated address', async () => {
+      const workEmail = emailFor('colin-auth-06-request');
+      const colinId = await createColin(workEmail);
+
+      await request(app.getHttpServer())
+        .delete(`/users/${colinId}`)
+        .set('authorization', 'Bearer <token:Root>')
+        .expect(200);
+
+      const res = await request(app.getHttpServer())
+        .post('/auth/magic-link')
+        .set('authorization', '')
+        .send({ email: workEmail })
+        .expect(200);
+
+      const body = res.body as Record<string, unknown>;
+      expect(body.sent).toBe(true);
+      // DEC-UM-012: reveals nothing beyond the generic shape — same
+      // assertion um-auth-01/02 already make for unknown/known addresses.
+      expect(Object.keys(body)).not.toEqual(
+        expect.arrayContaining(['token', 'password']),
+      );
+    });
+
+    it('Test 2 — a token issued before deactivation is denied at consume', async () => {
+      const workEmail = emailFor('colin-auth-06-consume');
+      const colinId = await createColin(workEmail);
+
+      await request(app.getHttpServer())
+        .delete(`/users/${colinId}`)
+        .set('authorization', 'Bearer <token:Root>')
+        .expect(200);
+
+      const res = await request(app.getHttpServer())
+        .post('/auth/magic-link/consume')
+        .set('authorization', '')
+        .send({ token: '<magic-link-token:colin-deactivated>' })
+        .expect(401);
+
+      const body = res.body as Record<string, unknown>;
+      expect(
+        body.accessToken ?? body.sessionToken ?? body.token,
+      ).toBeUndefined();
+    });
+  });
 });

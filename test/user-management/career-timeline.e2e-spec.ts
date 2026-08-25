@@ -183,6 +183,36 @@ describe('Career timeline — /users/:id/events (e2e)', () => {
     });
   });
 
+  describe('um-ct-08 · direct edit of a career-timeline event is rejected', () => {
+    // Placed here, right after um-ct-04, rather than at the file's end
+    // (matching the doc's own numbering): um-ct-06 soft-deletes this exact
+    // event, so this scenario's precondition ("the event from um-ct-04
+    // exists, undeleted") only holds before um-ct-06 runs.
+    it('Test 1 — rejects a direct PATCH on the event', async () => {
+      const res = await request(app.getHttpServer())
+        .patch(`/users/${aliceId}/events/${umCt04EventId}`)
+        .set('authorization', 'Bearer <token:Bob>')
+        .send({ details: { note: 'direct edit attempt' } });
+
+      expect([404, 405]).toContain(res.status);
+    });
+
+    it('Test 2 — the event is unchanged on a subsequent read', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/users/${aliceId}/events`)
+        .set('authorization', 'Bearer <token:Bob>')
+        .expect(200);
+
+      const body = res.body as Array<Record<string, unknown>>;
+      const event = body.find((e) => e.id === umCt04EventId);
+      expect(event).toBeDefined();
+      expect(event).toMatchObject({ type: 'joined_company', source: 'manual' });
+      expect(event?.details).not.toMatchObject({
+        note: 'direct edit attempt',
+      });
+    });
+  });
+
   describe('um-ct-05 · PP corrects a wrongly-inferred event', () => {
     let wrongEventId: string;
     let correctedEventId: string;
