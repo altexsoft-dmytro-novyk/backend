@@ -111,7 +111,8 @@ describe('User registration — POST /users (e2e)', () => {
       expect(body.customFields).toEqual({});
       expect(body.photo).toBeNull();
       expect(body.workPhone).toBeNull();
-      expect(body.birthDate).toBeNull();
+      expect(body.birthDay).toBeNull();
+      expect(body.birthMonth).toBeNull();
       expect(body.ttId).toBeNull();
       expect(Object.keys(body)).not.toEqual(
         expect.arrayContaining(['password', 'credential']),

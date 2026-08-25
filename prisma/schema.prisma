@@ -19,7 +19,8 @@ model User {
   city            String
   workEmail       String    @unique
   workPhone       String?
-  birthDate       DateTime? @db.Date
+  birthDay        Int?      // 1-31. No year captured/stored, for any audience (§3.2 S1: "birthday (day and month)")
+  birthMonth      Int?      // 1-12, paired with birthDay
   companyJoinDate DateTime  @db.Date
   isActive        Boolean   @default(true)
   ttId            String?   @unique
