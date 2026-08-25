@@ -6,7 +6,7 @@ import { uuidv7 } from 'uuidv7';
 import { AppModule } from '../../src/app.module';
 import { PrismaService } from '../../src/prisma/prisma.service';
 
-// Scenarios: docs/test-cases/user-management/registration/um-reg-01..05.md
+// Scenarios: docs/test-cases/user-management/registration/um-reg-01..15.md
 // Each block below is a direct, literal translation of one scenario file —
 // black-box HTTP calls only. No internal wiring (ports, adapters, fakes) is
 // referenced here: how the app resolves "Bearer <token:persona>" into a
@@ -497,6 +497,104 @@ describe('User registration — POST /users (e2e)', () => {
 
       const stored = await prisma.user.findUnique({ where: { workEmail } });
       expect(stored).not.toBeNull();
+    });
+  });
+
+  describe('um-reg-14 · birthday day and month persist together on create', () => {
+    it('returns birthDay/birthMonth exactly as submitted', async () => {
+      const workEmail = emailFor('greta-birthday');
+
+      const res = await request(app.getHttpServer())
+        .post('/users')
+        .set('authorization', 'Bearer <token:Root>')
+        .send({
+          firstName: 'Greta',
+          lastName: 'Lindqvist',
+          position: 'QA Engineer',
+          country: 'Poland',
+          city: 'Krakow',
+          workEmail,
+          companyJoinDate: '2026-09-01',
+          birthDay: 15,
+          birthMonth: 3,
+        })
+        .expect(201);
+
+      const body = res.body as Record<string, unknown>;
+      expect(body.birthDay).toBe(15);
+      expect(body.birthMonth).toBe(3);
+
+      const stored = await prisma.user.findUnique({ where: { workEmail } });
+      expect(stored?.birthDay).toBe(15);
+      expect(stored?.birthMonth).toBe(3);
+    });
+  });
+
+  describe('um-reg-15 · an incomplete or out-of-range birthday is rejected', () => {
+    const validBody = (
+      workEmail: string,
+      overrides: Record<string, unknown>,
+    ) => ({
+      firstName: 'Nina',
+      lastName: 'Volkova',
+      position: 'QA Engineer',
+      country: 'Poland',
+      city: 'Krakow',
+      workEmail,
+      companyJoinDate: '2026-09-01',
+      ...overrides,
+    });
+
+    it('Test 1 — birthDay without birthMonth is rejected with 400', async () => {
+      const workEmail = emailFor('birthday-day-only');
+
+      await request(app.getHttpServer())
+        .post('/users')
+        .set('authorization', 'Bearer <token:Root>')
+        .send(validBody(workEmail, { birthDay: 15 }))
+        .expect(400);
+
+      const stored = await prisma.user.findUnique({ where: { workEmail } });
+      expect(stored).toBeNull();
+    });
+
+    it('Test 2 — birthMonth without birthDay is rejected with 400', async () => {
+      const workEmail = emailFor('birthday-month-only');
+
+      await request(app.getHttpServer())
+        .post('/users')
+        .set('authorization', 'Bearer <token:Root>')
+        .send(validBody(workEmail, { birthMonth: 3 }))
+        .expect(400);
+
+      const stored = await prisma.user.findUnique({ where: { workEmail } });
+      expect(stored).toBeNull();
+    });
+
+    it('Test 3 — out-of-range birthDay is rejected with 400', async () => {
+      const workEmail = emailFor('birthday-day-oor');
+
+      await request(app.getHttpServer())
+        .post('/users')
+        .set('authorization', 'Bearer <token:Root>')
+        .send(validBody(workEmail, { birthDay: 32, birthMonth: 3 }))
+        .expect(400);
+
+      const stored = await prisma.user.findUnique({ where: { workEmail } });
+      expect(stored).toBeNull();
+    });
+
+    it('Test 4 — out-of-range birthMonth is rejected with 400', async () => {
+      const workEmail = emailFor('birthday-month-oor');
+
+      await request(app.getHttpServer())
+        .post('/users')
+        .set('authorization', 'Bearer <token:Root>')
+        .send(validBody(workEmail, { birthDay: 15, birthMonth: 13 }))
+        .expect(400);
+
+      const stored = await prisma.user.findUnique({ where: { workEmail } });
+      expect(stored).toBeNull();
     });
   });
 });

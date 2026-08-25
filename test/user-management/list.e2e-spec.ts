@@ -6,6 +6,13 @@ import { AppModule } from '../../src/app.module';
 import { PrismaService } from '../../src/prisma/prisma.service';
 
 // Scenarios: docs/test-cases/user-management/list/um-list-01..04.md
+// um-list-04 filters on scoped-per-run values (emailFor/ttId-with-runId)
+// rather than the doc's literal canonical-fixture values
+// (colin@company.example / tt-1042) — same run-isolation convention the
+// rest of this file already uses, so this file's own runs never collide
+// with another concurrent run or file. The deactivated-exclusion scenario
+// this slot used to cover now lives in deactivation.e2e-spec.ts's
+// um-deact-02 (the doc file was renamed/replaced, not just edited).
 // Preconditions this suite can produce (several users existing with
 // specific field combinations) are fulfilled with real POST /users
 // requests, not hardcoded ids — see
@@ -160,24 +167,137 @@ describe('User list — GET /users (e2e)', () => {
     });
   });
 
-  describe('um-list-04 · active-only filter excludes deactivated users', () => {
-    it('omits a deactivated user from the isActive=true listing', async () => {
-      const colin = await createUser({ workEmail: emailFor('colin-list-04') });
-      const colinId = colin.id as string;
+  describe('um-list-04 · list users filtered by the remaining S1 identity fields', () => {
+    const ttId = `tt-list-04-${runId}`;
+    let aliceId: string;
+    let colinId: string;
 
-      await request(app.getHttpServer())
-        .delete(`/users/${colinId}`)
-        .set('authorization', 'Bearer <token:Root>')
-        .expect(200);
+    beforeAll(async () => {
+      const alice = await createUser({
+        firstName: 'Alicja',
+        lastName: 'Larsson',
+        workEmail: emailFor('alicja-list-04'),
+        birthDay: 15,
+        birthMonth: 3,
+        workPhone: '+48-11-222-3333',
+        companyJoinDate: '2022-04-01',
+      });
+      aliceId = alice.id as string;
 
+      const colin = await createUser({
+        firstName: 'Colin',
+        lastName: 'Baseline',
+        workEmail: emailFor('colin-list-04'),
+        ttId,
+      });
+      colinId = colin.id as string;
+
+      // Contrast record: differs from Alice on every field under test below,
+      // and shares birthDay (but not birthMonth) with her so Test 4 can
+      // prove the compound filter excludes a partial match.
+      await createUser({
+        firstName: 'Zack',
+        lastName: 'Zimmer',
+        workEmail: emailFor('contrast-list-04'),
+        birthDay: 15,
+        birthMonth: 7,
+        workPhone: '+48-99-888-7777',
+        companyJoinDate: '2023-01-01',
+      });
+    });
+
+    it('Test 1 — filter by lastName', async () => {
       const res = await request(app.getHttpServer())
         .get('/users')
-        .query({ isActive: true })
+        .query({ lastName: 'Larsson' })
         .set('authorization', 'Bearer <token:Root>')
         .expect(200);
 
       const results = resultsOf(res.body);
-      expect(results.some((u) => u.id === colinId)).toBe(false);
+      expect(results.length).toBeGreaterThan(0);
+      for (const item of results) {
+        expect(item.lastName).toBe('Larsson');
+      }
+    });
+
+    it('Test 2 — filter by workEmail', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/users')
+        .query({ workEmail: emailFor('colin-list-04') })
+        .set('authorization', 'Bearer <token:Root>')
+        .expect(200);
+
+      const results = resultsOf(res.body);
+      expect(results.map((u) => u.id)).toEqual([colinId]);
+    });
+
+    it('Test 3 — filter by ttId', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/users')
+        .query({ ttId })
+        .set('authorization', 'Bearer <token:Root>')
+        .expect(200);
+
+      const results = resultsOf(res.body);
+      expect(results.map((u) => u.id)).toEqual([colinId]);
+    });
+
+    it('Test 4 — compound filter by birthDay + birthMonth excludes a partial match', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/users')
+        .query({ birthDay: 15, birthMonth: 3 })
+        .set('authorization', 'Bearer <token:Root>')
+        .expect(200);
+
+      const results = resultsOf(res.body);
+      expect(results.length).toBeGreaterThan(0);
+      for (const item of results) {
+        expect(item.birthDay).toBe(15);
+        expect(item.birthMonth).toBe(3);
+      }
+      expect(results.some((u) => u.id === aliceId)).toBe(true);
+    });
+
+    it('Test 5 — filter by firstName', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/users')
+        .query({ firstName: 'Alicja' })
+        .set('authorization', 'Bearer <token:Root>')
+        .expect(200);
+
+      const results = resultsOf(res.body);
+      expect(results.length).toBeGreaterThan(0);
+      for (const item of results) {
+        expect(item.firstName).toBe('Alicja');
+      }
+    });
+
+    it('Test 6 — filter by workPhone', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/users')
+        .query({ workPhone: '+48-11-222-3333' })
+        .set('authorization', 'Bearer <token:Root>')
+        .expect(200);
+
+      const results = resultsOf(res.body);
+      expect(results.length).toBeGreaterThan(0);
+      for (const item of results) {
+        expect(item.workPhone).toBe('+48-11-222-3333');
+      }
+    });
+
+    it('Test 7 — filter by companyJoinDate', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/users')
+        .query({ companyJoinDate: '2022-04-01' })
+        .set('authorization', 'Bearer <token:Root>')
+        .expect(200);
+
+      const results = resultsOf(res.body);
+      expect(results.length).toBeGreaterThan(0);
+      for (const item of results) {
+        expect(item.companyJoinDate).toBe('2022-04-01');
+      }
     });
   });
 });
