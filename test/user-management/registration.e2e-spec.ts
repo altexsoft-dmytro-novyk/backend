@@ -209,7 +209,11 @@ describe('User registration — POST /users (e2e)', () => {
         .send({
           firstName: 'Nina',
           lastName: 'Volkova',
+          position: 'Backend Engineer',
+          country: 'Poland',
+          city: 'Gdansk',
           workEmail,
+          companyJoinDate: '2026-09-15',
         })
         .expect(201);
 

@@ -1,4 +1,33 @@
 services:
+  localstack:
+    image: localstack/localstack
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - '${LOCALSTACK_PORT:-4566}:4566'
+    environment:
+      - SERVICES=s3
+      - DEBUG=1
+      - CLEAR_TMP_FOLDER=0
+      - AWS_DEFAULT_REGION=${AWS_REGION:-us-east-1}
+      # 2026.03.0+ unified image requires this (free Hobby plan at
+      # localstack.cloud); sourced from .env via env_file above, not
+      # committed. The old no-token bypass
+      # (LOCALSTACK_ACKNOWLEDGE_ACCOUNT_REQUIREMENT) expired 2026-04-06.
+      - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN}
+    volumes:
+      - localstack-data:/var/lib/localstack
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'curl -sf http://127.0.0.1:4566/_localstack/health | grep -q ''"s3": "available"''',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
   postgres:
     image: postgres:18-alpine
     restart: unless-stopped
@@ -18,3 +47,4 @@ services:
 
 volumes:
   pgdata:
+  localstack-data:

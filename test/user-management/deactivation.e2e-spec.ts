@@ -92,8 +92,15 @@ describe('Deactivation — DELETE /users/:id (e2e)', () => {
         .set('authorization', 'Bearer <token:Root>')
         .expect(200);
 
-      const body = res.body as Array<Record<string, unknown>>;
-      expect(body.some((u) => u.id === colinId)).toBe(false);
+      // GET /users returns a pagination envelope, not a bare array (see
+      // list.e2e-spec.ts's own top-of-file note: the envelope shape isn't
+      // fixed, so unwrap defensively the same way that file does).
+      const envelope = res.body as Record<string, unknown>;
+      const results = (envelope.data ??
+        envelope.items ??
+        envelope.results ??
+        envelope) as Array<Record<string, unknown>>;
+      expect(results.some((u) => u.id === colinId)).toBe(false);
     });
   });
 

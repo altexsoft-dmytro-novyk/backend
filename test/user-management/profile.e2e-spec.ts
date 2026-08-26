@@ -100,7 +100,7 @@ describe('Profile edits — PATCH /users/:id, PUT /users/:id/photo (e2e)', () =>
       const res = await request(app.getHttpServer())
         .put(`/users/${aliceId}/photo`)
         .set('authorization', 'Bearer <token:Alice>')
-        .send({ photo: '<binary-or-uploaded-file-ref>' })
+        .attach('photo', Buffer.from('fake-jpeg-bytes'), 'alice.jpg')
         .expect(200);
 
       const body = res.body as Record<string, unknown>;
