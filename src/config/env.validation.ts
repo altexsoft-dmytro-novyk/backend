@@ -7,4 +7,11 @@ export const envValidationSchema = Joi.object({
   PORT: Joi.number().port().default(3001),
   CORS_ORIGIN: Joi.string().uri().default('http://localhost:4200'),
   DATABASE_URL: Joi.string().required(),
+  ROOT_WORK_EMAIL: Joi.string().email().default('root@company.example'),
+  AWS_REGION: Joi.string().default('us-east-1'),
+  AWS_S3_BUCKET: Joi.string().default('user-management-photos'),
+  // Set for LocalStack (local dev/CI); unset in prod to use real AWS endpoints.
+  AWS_ENDPOINT_URL: Joi.string().uri().optional(),
+  AWS_ACCESS_KEY_ID: Joi.string().default('test'),
+  AWS_SECRET_ACCESS_KEY: Joi.string().default('test'),
 });

@@ -15,13 +15,13 @@ Backend starter: NestJS 11 + Prisma 7 + PostgreSQL 18 (Docker).
 
 ## Requirements
 
-- **Node.js 22 LTS** (`.nvmrc` included — `nvm use`). ⚠️ Node 23 is not supported by Prisma 7
+- **Node.js >=24** (`.nvmrc` included — `nvm use`)
 - Docker (colima/Docker Desktop)
 
 ## Quick Start
 
 ```bash
-nvm use                # Node 22
+nvm use                # Node 24
 npm install            # postinstall generates the Prisma client
 cp .env.example .env   # on first run
 npm run db:up          # start Postgres in Docker
@@ -41,6 +41,7 @@ Check: `curl http://localhost:3001/api/v1/health`
 | `npm run db:migrate` | Create + apply a migration (dev) |
 | `npm run db:deploy` | Apply migrations (prod) |
 | `npm run db:studio` | Prisma Studio (DB GUI) |
+| `npm run db:seed` | Bootstrap the first `User` row (email from `ROOT_WORK_EMAIL`, see `.env.example`) |
 | `npm run lint` / `format` | ESLint / Prettier |
 | `npm test` / `test:e2e` | Unit / e2e tests |
 

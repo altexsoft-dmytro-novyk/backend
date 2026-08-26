@@ -5,7 +5,7 @@ paths:
 
 # Feature Module Conventions
 
-Reference example: `src/modules/users/` — copy its patterns for every new module.
+**Legacy pattern.** `src/modules/users/` (this doc's original reference example) was replaced by the `user-management` bounded context (`src/user-management/`, hexagonal layout — see `docs/architecture/domain-driven-design.md`). This file still applies to what's left under `src/modules/` (e.g. `health`); do not use it as the template for a new feature — use the bounded-context layout instead.
 
 ## Anatomy
 
