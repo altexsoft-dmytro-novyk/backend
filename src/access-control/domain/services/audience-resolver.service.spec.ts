@@ -18,7 +18,10 @@ class FakeGraph implements RelationshipGraphPort {
     private readonly pp: string[] = [],
   ) {}
 
-  loadAudienceFacts(_viewerId: string, targetIds: string[]): Promise<AudienceFacts> {
+  loadAudienceFacts(
+    _viewerId: string,
+    targetIds: string[],
+  ): Promise<AudienceFacts> {
     this.calls += 1;
     this.lastTargets = targetIds;
     return Promise.resolve({
@@ -156,7 +159,9 @@ describe('AudienceResolverService (Phase 0)', () => {
       // Phase 0 returns exactly one label per target; both grant identically
       // under the provisional mapping, so precedence is a reporting-first
       // convention, not a permission decision.
-      const resolver = new AudienceResolverService(new FakeGraph([ALICE], [ALICE]));
+      const resolver = new AudienceResolverService(
+        new FakeGraph([ALICE], [ALICE]),
+      );
 
       const audiences = await resolver.resolve(BOB, [ALICE]);
 

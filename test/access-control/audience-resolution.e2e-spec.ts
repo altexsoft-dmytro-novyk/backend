@@ -4,8 +4,13 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../../src/app.module';
 import { PrismaService } from '../../src/prisma/prisma.service';
+import { uuidv7 } from 'uuidv7';
 import { AccessControlModule } from '../../src/access-control/access-control.module';
 import { AccessControlFacade } from '../../src/access-control/application/access-control.facade';
+import {
+  RELATIONSHIP_GRAPH_PORT,
+  type RelationshipGraphPort,
+} from '../../src/access-control/domain/interfaces/relationship-graph.port';
 import {
   ACCESS_CONTROL_PORT,
   type AccessControlPort,
@@ -38,7 +43,9 @@ class FacadeBackedAccessControlAdapter implements AccessControlPort {
     _feature: string,
     targetUserId: string,
   ): Promise<boolean> {
-    const audiences = await this.facade.resolveAudiences(userId, [targetUserId]);
+    const audiences = await this.facade.resolveAudiences(userId, [
+      targetUserId,
+    ]);
     const audience = audiences.get(targetUserId);
     return audience === 'self' || audience === 'reporting' || audience === 'pp';
   }
@@ -96,8 +103,10 @@ describe('Access Control Phase 0 — audience resolution over GET /users/:id (e2
 
     // Alice is created first and self-references through `createdBy`, the same
     // way the bootstrap seed row does — every later fixture points at her.
-    const alice = await prisma.user.create({
+    const aliceId = uuidv7();
+    await prisma.user.create({
       data: {
+        id: aliceId,
         firstName: 'Alice',
         lastName: 'Fixture',
         position: 'Engineer',
@@ -105,15 +114,11 @@ describe('Access Control Phase 0 — audience resolution over GET /users/:id (e2
         city: 'Krakow',
         workEmail: emailFor('Alice'),
         companyJoinDate: new Date('2020-01-01'),
-        createdBy: '00000000-0000-0000-0000-000000000000',
+        createdBy: aliceId,
       } as never,
       select: { id: true },
     });
-    ids.Alice = alice.id;
-    await prisma.user.update({
-      where: { id: alice.id },
-      data: { createdBy: alice.id },
-    });
+    ids.Alice = aliceId;
 
     await createUser('Bob', { position: 'Unit Manager' });
     await createUser('Carol', { position: 'Director' });
@@ -121,14 +126,21 @@ describe('Access Control Phase 0 — audience resolution over GET /users/:id (e2
     await createUser('Hana', { position: 'HR Lead' });
     await createUser('Colin');
     await createUser('Erin');
-    await createUser('InactiveMgr', { position: 'Unit Manager', isActive: false });
+    await createUser('InactiveMgr', {
+      position: 'Unit Manager',
+      isActive: false,
+    });
     await createUser('Frank', { position: 'Director' });
 
     await prisma.relationship.createMany({
       data: [
         { userId: ids.Alice, type: 'direct', reportsToUserId: ids.Bob },
         { userId: ids.Bob, type: 'direct', reportsToUserId: ids.Carol },
-        { userId: ids.Alice, type: 'people_partner', reportsToUserId: ids.Paula },
+        {
+          userId: ids.Alice,
+          type: 'people_partner',
+          reportsToUserId: ids.Paula,
+        },
         { userId: ids.Paula, type: 'direct', reportsToUserId: ids.Hana },
         { userId: ids.Erin, type: 'direct', reportsToUserId: ids.InactiveMgr },
         { userId: ids.InactiveMgr, type: 'direct', reportsToUserId: ids.Frank },
@@ -137,12 +149,18 @@ describe('Access Control Phase 0 — audience resolution over GET /users/:id (e2
   });
 
   afterAll(async () => {
-    const fixtureIds = Object.values(ids);
-    await prisma.relationship.deleteMany({
-      where: { userId: { in: fixtureIds } },
-    });
-    await prisma.user.deleteMany({ where: { id: { in: fixtureIds } } });
-    await app.close();
+    // Guarded: when beforeAll fails, cleanup must not throw over the top of the
+    // real error and hide why the suite could not start.
+    if (prisma) {
+      const fixtureIds = Object.values(ids);
+      await prisma.relationship.deleteMany({
+        where: { userId: { in: fixtureIds } },
+      });
+      await prisma.user.deleteMany({ where: { id: { in: fixtureIds } } });
+    }
+    if (app) {
+      await app.close();
+    }
   });
 
   describe('ACF-AU-01 · Self reads own profile', () => {
@@ -214,16 +232,14 @@ describe('Access Control Phase 0 — audience resolution over GET /users/:id (e2
   describe('ACF-FC-03 · Empty bulk resolves without touching the database', () => {
     it('returns an empty map and issues no query', async () => {
       const facade = app.get(AccessControlFacade);
-      let statements = 0;
-      const countQueries = () => {
-        statements += 1;
-      };
-      prisma.$on('query' as never, countQueries as never);
+      const graph = app.get<RelationshipGraphPort>(RELATIONSHIP_GRAPH_PORT);
+      const loadFacts = jest.spyOn(graph, 'loadAudienceFacts');
 
       const audiences = await facade.resolveAudiences(ids.Colin, []);
 
       expect(audiences.size).toBe(0);
-      expect(statements).toBe(0);
+      expect(loadFacts).not.toHaveBeenCalled();
+      loadFacts.mockRestore();
     });
   });
 

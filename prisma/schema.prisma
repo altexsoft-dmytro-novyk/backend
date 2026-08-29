@@ -32,5 +32,52 @@ model User {
   creator         User      @relation("UserCreatedBy", fields: [createdBy], references: [id])
   createdUsers    User[]    @relation("UserCreatedBy")
 
+  // Org facts live in `Relationship`, never as columns here (AD-11): a manager
+  // pointer on the profile row is the stored-access mistake the audience walk exists to avoid.
+  relationships     Relationship[] @relation("RelationshipSubject")
+  incomingRelations Relationship[] @relation("RelationshipReportsTo")
+
   @@map("users")
+}
+
+
+enum RelationshipType {
+  direct
+  project
+  people_partner
+}
+
+// The org-fact edge table the audience walk recurses over (AD-11). One typed
+// row per fact; `reportsToUserId` carries the endpoint for both `direct` and
+// `people_partner`, `projectId` for `project`. The shape rule, the
+// one-manager/one-PP cardinality and the no-self-report guard are CHECK and
+// partial-unique constraints in the migration — Prisma cannot express them.
+model Relationship {
+  id              String           @id @default(uuid(7))
+  userId          String
+  type            RelationshipType
+  reportsToUserId String?
+  projectId       String?
+
+  user      User     @relation("RelationshipSubject", fields: [userId], references: [id], onDelete: Cascade)
+  reportsTo User?    @relation("RelationshipReportsTo", fields: [reportsToUserId], references: [id], onDelete: Restrict)
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  @@index([userId, type])
+  // The resolver's hot path filters type + endpoint, in that column order.
+  @@index([reportsToUserId, type])
+  @@index([projectId])
+  @@map("relationships")
+}
+
+// Present so `Relationship.projectId` has a real target. Project-line audiences
+// stay fail-closed until the timetracker assignment/freshness contract is
+// approved, so nothing reads this table yet.
+model Project {
+  id            String         @id @default(uuid(7))
+  name          String
+  createdAt     DateTime       @default(now())
+  relationships Relationship[]
+
+  @@map("projects")
 }
