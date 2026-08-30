@@ -215,18 +215,21 @@ export async function detachPolicyFromUser(
  */
 export async function deleteUserBreakingReferences(
   prisma: PrismaService,
-  referencingTable: string,
+  _referencingTable: string,
   userId: string,
 ): Promise<void> {
-  await prisma.$executeRawUnsafe(
-    `ALTER TABLE "${referencingTable}" DISABLE TRIGGER ALL`,
-  );
+  // Postgres installs the RESTRICT-enforcing RI trigger on the REFERENCED
+  // table (`users`, the DELETE target here), not on the referencing child
+  // table — confirmed against pg_trigger. Disabling triggers on the child
+  // table (the original `referencingTable` parameter, kept for call-site
+  // compatibility but unused) leaves the actual RESTRICT trigger active and
+  // the DELETE still fails; disabling `users`' own triggers is what
+  // actually bypasses it for this one deliberate hard delete.
+  await prisma.$executeRawUnsafe(`ALTER TABLE "users" DISABLE TRIGGER ALL`);
   try {
     await prisma.$executeRawUnsafe(`DELETE FROM "users" WHERE id = $1`, userId);
   } finally {
-    await prisma.$executeRawUnsafe(
-      `ALTER TABLE "${referencingTable}" ENABLE TRIGGER ALL`,
-    );
+    await prisma.$executeRawUnsafe(`ALTER TABLE "users" ENABLE TRIGGER ALL`);
   }
 }
 
@@ -235,18 +238,17 @@ export async function deleteProjectBreakingReferences(
   prisma: PrismaService,
   projectId: string,
 ): Promise<void> {
-  await prisma.$executeRawUnsafe(
-    `ALTER TABLE "project_assignments" DISABLE TRIGGER ALL`,
-  );
+  // Same correction as deleteUserBreakingReferences above: the RESTRICT
+  // trigger lives on `projects` (the DELETE target/referenced table), not
+  // on the referencing `project_assignments` child table.
+  await prisma.$executeRawUnsafe(`ALTER TABLE "projects" DISABLE TRIGGER ALL`);
   try {
     await prisma.$executeRawUnsafe(
       `DELETE FROM "projects" WHERE id = $1`,
       projectId,
     );
   } finally {
-    await prisma.$executeRawUnsafe(
-      `ALTER TABLE "project_assignments" ENABLE TRIGGER ALL`,
-    );
+    await prisma.$executeRawUnsafe(`ALTER TABLE "projects" ENABLE TRIGGER ALL`);
   }
 }
 
@@ -283,6 +285,13 @@ export async function cleanupRun(
       where: { userId: { in: userIds } },
     });
     await prisma.userEvents.deleteMany({ where: { userId: { in: userIds } } });
+    // SectionRecord (added after this fixture was authored — see
+    // schema.prisma's doc comment) is written by the facade's own S2-S8/
+    // S10/S12/S16 routes; every run-scoped user this fixture creates may
+    // have rows here by the time cleanup runs.
+    await prisma.sectionRecord.deleteMany({
+      where: { userId: { in: userIds } },
+    });
     await prisma.magicLinkToken.deleteMany({
       where: { userId: { in: userIds } },
     });
