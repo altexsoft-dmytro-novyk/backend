@@ -1,7 +1,9 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
+  Delete,
   ForbiddenException,
   Get,
   NotFoundException,
@@ -17,6 +19,7 @@ import { randomUUID } from 'crypto';
 import { AccessControlAction } from '../../../access-control/application/actions/access-control.action';
 import { SessionAuthGuard } from '../../../access-control/application/guards/session-auth.guard';
 import type { AuthenticatedRequest } from '../../../access-control/application/guards/session-auth.guard';
+import { Prisma } from '../../../generated/prisma/client';
 import { ProfileDataRepository } from '../../infrastructure/profile-data.repository';
 import {
   assertSectionRead,
@@ -30,6 +33,11 @@ const DERIVED_S1_FIELDS = [
   'departmentManagerId',
 ];
 
+// FR-9: identity-card fields Manager/PP/reporting-line writers may change
+// through the plain S1 PATCH. workEmail is included per FR-7 ("workEmail
+// and ttId are unique ... on authorized identity updates") and um-pf-03 —
+// its uniqueness violation is caught below and mapped to 409, never a
+// silent no-op.
 const S1_WRITABLE_FIELDS = [
   'position',
   'country',
@@ -37,6 +45,7 @@ const S1_WRITABLE_FIELDS = [
   'workPhone',
   'birthDay',
   'birthMonth',
+  'workEmail',
 ];
 
 const CUSTOM_FIELD_DEFS = [
@@ -55,31 +64,102 @@ export class UsersController {
 
   // --- /users list (AC-AD-12 empty bulk, AC-AD-15 active-list exclusion) ---
 
+  // Story 1.5 (FR-15/FR-16): paginated, filtered public listing. `status`
+  // (legacy) and the new `employmentStatus` filter are both accepted —
+  // AC-AD-12/AC-AD-15 (access-control's own 181-test suite) already depend
+  // on `?ids=` (empty-list fast path) and `?status=active`; both keep their
+  // exact prior shape/behavior. `ttId`/`isActive` are deliberately never
+  // filterable — see ProfileDataRepository.listUsersPage's doc comment.
   @Get()
-  async list(@Query('ids') ids?: string, @Query('status') status?: string) {
+  async list(
+    @Query('ids') ids?: string,
+    @Query('status') status?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('employmentStatus') employmentStatus?: string,
+    @Query('country') country?: string,
+    @Query('city') city?: string,
+    @Query('position') position?: string,
+    @Query('firstName') firstName?: string,
+    @Query('lastName') lastName?: string,
+    @Query('workEmail') workEmail?: string,
+    @Query('workPhone') workPhone?: string,
+    @Query('companyJoinDate') companyJoinDate?: string,
+    @Query('birthDay') birthDay?: string,
+    @Query('birthMonth') birthMonth?: string,
+  ) {
     const idList =
       ids !== undefined ? ids.split(',').filter(Boolean) : undefined;
     if (idList && idList.length === 0) {
       return { items: [] };
     }
-    const users = await this.repo.listUsers({
+
+    const pageNum = Math.max(1, Number(page) || 1);
+    const pageSizeNum = Math.min(200, Math.max(1, Number(pageSize) || 50));
+
+    const filters: Record<string, string | number | Date | undefined> = {
+      country,
+      city,
+      position,
+      firstName,
+      lastName,
+      workEmail,
+      workPhone,
+      birthDay: birthDay !== undefined ? Number(birthDay) : undefined,
+      birthMonth: birthMonth !== undefined ? Number(birthMonth) : undefined,
+      // companyJoinDate is a @db.Date column — Prisma needs the parsed
+      // Date, not the raw query string, for an exact-day equality filter.
+      companyJoinDate: companyJoinDate ? new Date(companyJoinDate) : undefined,
+    };
+
+    const { items: candidates, total } = await this.repo.listUsersPage({
       ids: idList,
-      activeOnly: status === 'active',
+      filters,
+      skip: (pageNum - 1) * pageSizeNum,
+      take: pageSizeNum,
     });
-    let items = users;
-    if (status === 'active') {
-      const departedFlags = await Promise.all(
-        users.map((u) => this.accessControl.isDeparted(u.id)),
-      );
-      items = users.filter((_, i) => !departedFlags[i]);
-    }
+
+    const statusMap = await this.repo.resolveEmploymentStatuses(
+      candidates.map((u) => u.id),
+    );
+    const wantDismissed = employmentStatus === 'dismissed';
+    // Default behavior (no explicit filter, or the legacy `status=active`)
+    // excludes dismissed employees from the default view — findable only
+    // through the explicit filter (Story 1.5 AC / um-list-05).
+    const excludeDismissed = !wantDismissed;
+
+    const items = candidates.filter((u) => {
+      const effective = statusMap.get(u.id) ?? 'active';
+      if (wantDismissed) return effective === 'dismissed';
+      if (excludeDismissed) return effective !== 'dismissed';
+      return true;
+    });
+
+    // Note: `total` is the DB-level count matching the field filters only —
+    // the employment-status default-exclusion is applied to this page's
+    // rows in application code (bulk-resolved, not a per-row query), so a
+    // page can return fewer than `pageSize` items even when more field-
+    // matching rows exist beyond it. Pushing this into one DB-level query
+    // would need a materialized/computed status column; out of this
+    // story's scope to add speculatively.
     return {
       items: items.map((u) => ({
         id: u.id,
         firstName: u.firstName,
         lastName: u.lastName,
         workEmail: u.workEmail,
+        position: u.position,
+        country: u.country,
+        city: u.city,
+        workPhone: u.workPhone,
+        birthDay: u.birthDay,
+        birthMonth: u.birthMonth,
+        companyJoinDate: u.companyJoinDate,
+        employmentStatus: statusMap.get(u.id) ?? 'active',
       })),
+      total,
+      page: pageNum,
+      pageSize: pageSizeNum,
     };
   }
 
@@ -98,23 +178,28 @@ export class UsersController {
 
     const projects = await this.repo.listProjects(id);
 
-    const body: Record<string, unknown> = {
-      identity: {
-        firstName: user.firstName,
-        lastName: user.lastName,
-        photo: user.photo,
-        position: user.position,
-        country: user.country,
-        city: user.city,
-        workEmail: user.workEmail,
-        workPhone: user.workPhone,
-        birthDay: user.birthDay,
-        birthMonth: user.birthMonth,
-        companyJoinDate: user.companyJoinDate,
-      },
+    // Identity fields are exposed both nested (`identity`, the shape the
+    // access-control matrix suite's 181 E2E tests were written against) and
+    // flattened at the top level (um-seed-01 reads position/country/city/
+    // workPhone/birthDay/birthMonth/companyJoinDate directly off the root
+    // body) — additive, no key collisions between the two.
+    const identity = {
       firstName: user.firstName,
       lastName: user.lastName,
+      photo: user.photo,
+      position: user.position,
+      country: user.country,
+      city: user.city,
       workEmail: user.workEmail,
+      workPhone: user.workPhone,
+      birthDay: user.birthDay,
+      birthMonth: user.birthMonth,
+      companyJoinDate: user.companyJoinDate,
+    };
+
+    const body: Record<string, unknown> = {
+      identity,
+      ...identity,
       employmentStatus,
       projects: colleagueOnly
         ? projects.map((p) => ({ name: p.name }))
@@ -171,7 +256,24 @@ export class UsersController {
       if (field in body) s1Patch[field] = body[field];
     }
     if (Object.keys(s1Patch).length > 0) {
-      await this.repo.updateUser(id, s1Patch);
+      try {
+        await this.repo.updateUserTrackingPositionChange(
+          id,
+          s1Patch,
+          req.actorId,
+        );
+      } catch (err) {
+        // um-pf-03/FR-7: a unique-constraint violation on workEmail/ttId is
+        // a 409, not a silent no-op or a 500 — Alice's row is left
+        // unchanged since Prisma's update never applied.
+        if (
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === 'P2002'
+        ) {
+          throw new ConflictException();
+        }
+        throw err;
+      }
     }
 
     if (touchesMentorshipFlag) {
@@ -510,19 +612,60 @@ export class UsersController {
     ]);
     if (!isDirectManager && !isPP) throw new ForbiddenException();
 
-    const eventDate = body.occurredAt
-      ? new Date(body.occurredAt as string)
-      : new Date();
+    // um-ct-03/05: the manual-add scenarios send `eventDate` and `details`
+    // directly (the matrix E2E suite's own probes send the older
+    // `occurredAt`/`title` shape instead) — accept either so both call
+    // sites keep working.
+    const eventDate = body.eventDate
+      ? new Date(body.eventDate as string)
+      : body.occurredAt
+        ? new Date(body.occurredAt as string)
+        : new Date();
+    const details =
+      (body.details as Record<string, unknown> | undefined) ??
+      (body.title !== undefined ? { title: body.title } : {});
     const created = await this.repo.createEvent(
       id,
       {
         type: (body.type as string) ?? 'manual_backfill',
         eventDate,
-        details: { title: body.title },
+        details,
       },
       req.actorId,
     );
-    return { id: created.id, type: created.type, eventDate: created.eventDate };
+    return {
+      id: created.id,
+      type: created.type,
+      source: created.source,
+      eventDate: created.eventDate,
+      details: created.details,
+    };
+  }
+
+  // AD-20: manual delete is a soft-delete (deletedAt), never a hard delete
+  // — the row stays reconstructable, just excluded from listEvents' active
+  // read. Same AD-26 narrowing as the manual add above (direct UM/assigned
+  // PP only).
+  @Delete(':id/events/:eventId')
+  async deleteEvent(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('eventId') eventId: string,
+  ) {
+    await this.requireTarget(id);
+    await assertSectionWrite(this.accessControl, req.actorId, id, 's9');
+
+    const [isDirectManager, isPP] = await Promise.all([
+      this.accessControl.isDirectManager(req.actorId, id),
+      this.accessControl.isAssignedPP(req.actorId, id),
+    ]);
+    if (!isDirectManager && !isPP) throw new ForbiddenException();
+
+    const event = await this.repo.findEvent(id, eventId);
+    if (!event) throw new NotFoundException();
+
+    await this.repo.softDeleteEvent(eventId);
+    return { id: eventId };
   }
 
   // --- S10 leaves (always read-only, timetracker integration deferred) ---

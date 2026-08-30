@@ -93,6 +93,32 @@ export async function createSeededUser(
   return user;
 }
 
+// AD-5: real reports-to / people-partner edges, needed once the
+// profile/career-timeline/list suites started exercising real
+// AccessControl-gated routes (Bob as Alice's manager, Paula as her PP) —
+// same shape as test/access-control/fixtures/graph.ts's equivalents.
+export async function createDirectEdge(
+  prisma: PrismaService,
+  subjectUserId: string,
+  holderUserId: string,
+): Promise<{ id: string }> {
+  const rel = await prisma.relationship.create({
+    data: { type: 'direct', subjectUserId, holderUserId },
+  });
+  return { id: rel.id };
+}
+
+export async function createPPEdge(
+  prisma: PrismaService,
+  subjectUserId: string,
+  holderUserId: string,
+): Promise<{ id: string }> {
+  const rel = await prisma.relationship.create({
+    data: { type: 'people_partner', subjectUserId, holderUserId },
+  });
+  return { id: rel.id };
+}
+
 export async function writeJoinedCompanyEvent(
   prisma: PrismaService,
   userId: string,
@@ -110,6 +136,29 @@ export async function writeJoinedCompanyEvent(
     },
   });
   return { id: event.id };
+}
+
+/**
+ * Closest real substitute for "Colin's departure effective date has passed
+ * and the executor has applied it" (um-list-05's precondition) — Epic 5's
+ * Departure-record + AD-16 scheduled executor are a different epic, out of
+ * this task's scope to build. This writes the materialized outcome the
+ * executor would have produced (an open, dismissed EmploymentStatus row)
+ * directly, per nest-e2e.md's "closest real substitute" guidance, so
+ * um-list-05 can exercise the real GET /users default-exclusion/filter
+ * logic without re-deriving Epic 5's own machinery.
+ */
+export async function markDismissed(
+  prisma: PrismaService,
+  userId: string,
+): Promise<void> {
+  await prisma.employmentStatus.create({
+    data: {
+      userId,
+      status: 'dismissed',
+      startDate: new Date(),
+    },
+  });
 }
 
 export async function deactivateUser(
@@ -130,6 +179,15 @@ export async function deactivateUser(
  * for cleaning up only the UserPolicy attachment they create (cleanupRun
  * below does this), never the Policy row itself.
  */
+/**
+ * Also idempotently attaches the `manage_roles` permission (AD-9 closed
+ * catalog — same permission prisma/seed.ts's real HR Admin bootstrap
+ * seeds), so a session established for a policy holder created through
+ * this fixture can actually pass RolesController's `isAllowed(actorId,
+ * 'manage_roles')` gate on `GET /roles` — without it, um-seed-03's own
+ * assertion (root reading the role catalog) would 403 before it ever got
+ * to check holderCount.
+ */
 export async function ensureHrAdminPolicy(
   prisma: PrismaService,
 ): Promise<{ id: string }> {
@@ -137,6 +195,21 @@ export async function ensureHrAdminPolicy(
     where: { name: 'HR Admin' },
     update: {},
     create: { name: 'HR Admin' },
+  });
+  const permission = await prisma.permission.upsert({
+    where: { name: 'manage_roles' },
+    update: {},
+    create: { name: 'manage_roles' },
+  });
+  await prisma.policyPermission.upsert({
+    where: {
+      policyId_permissionId: {
+        policyId: policy.id,
+        permissionId: permission.id,
+      },
+    },
+    update: {},
+    create: { policyId: policy.id, permissionId: permission.id },
   });
   return { id: policy.id };
 }
@@ -147,6 +220,24 @@ export async function attachPolicyToUser(
   policyId: string,
 ): Promise<void> {
   await prisma.userPolicy.create({ data: { userId, policyId } });
+}
+
+/**
+ * Detaches one policy attachment early (before the file's own afterAll
+ * cleanup) — needed when a scenario attaches a fixture user to the shared,
+ * name-idempotent 'HR Admin' policy (ensureHrAdminPolicy) purely to pass an
+ * unrelated permission gate, and a *later* scenario in the same file
+ * counts that policy's holders. Without this, holder counts silently
+ * accumulate across describe blocks within one file run.
+ */
+export async function detachPolicyFromUser(
+  prisma: PrismaService,
+  userId: string,
+  policyId: string,
+): Promise<void> {
+  await prisma.userPolicy.delete({
+    where: { userId_policyId: { userId, policyId } },
+  });
 }
 
 /**
@@ -167,7 +258,28 @@ export async function cleanupRun(
   const userIds = users.map((u) => u.id);
 
   if (userIds.length > 0) {
+    // Relationship/RelationshipJournal rows must go before the users they
+    // reference — User's FK to Relationship is RESTRICT, same ordering
+    // concern test/access-control/fixtures/graph.ts's cleanupRun documents.
+    await prisma.relationship.deleteMany({
+      where: {
+        OR: [
+          { subjectUserId: { in: userIds } },
+          { holderUserId: { in: userIds } },
+        ],
+      },
+    });
+    await prisma.relationshipJournal.deleteMany({
+      where: { subjectUserId: { in: userIds } },
+    });
+    await prisma.departure.deleteMany({ where: { userId: { in: userIds } } });
+    await prisma.employmentStatus.deleteMany({
+      where: { userId: { in: userIds } },
+    });
     await prisma.userEvents.deleteMany({ where: { userId: { in: userIds } } });
+    await prisma.sectionRecord.deleteMany({
+      where: { userId: { in: userIds } },
+    });
     await prisma.magicLinkToken.deleteMany({
       where: { userId: { in: userIds } },
     });

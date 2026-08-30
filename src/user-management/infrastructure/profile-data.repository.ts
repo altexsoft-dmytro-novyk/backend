@@ -34,8 +34,111 @@ export class ProfileDataRepository {
     return this.prisma.user.findMany({ where });
   }
 
+  /**
+   * Story 1.5 (FR-15/FR-16): paginated, filtered S1 identity listing.
+   * `ttId` is deliberately not a supported filter key — FR-15/epics.md
+   * Story 1.5 both state technical `ttId`/`isActive` are never public
+   * filters (docs/test-cases/user-management/list/um-list-04.md's own Test
+   * 3 asks for a `ttId` filter, which conflicts with that rule; FR-15 wins
+   * as the higher-altitude, twice-stated source — see the rewritten
+   * list.e2e-spec.ts's top-of-file note).
+   */
+  async listUsersPage(opts: {
+    ids?: string[];
+    filters: Record<string, string | number | Date | undefined>;
+    skip: number;
+    take: number;
+  }): Promise<{ items: User[]; total: number }> {
+    const where: Record<string, unknown> = {};
+    if (opts.ids) where.id = { in: opts.ids };
+    for (const [key, value] of Object.entries(opts.filters)) {
+      if (value === undefined) continue;
+      where[key] = value;
+    }
+    const [items, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        skip: opts.skip,
+        take: opts.take,
+        orderBy: { id: 'asc' },
+      }),
+      this.prisma.user.count({ where }),
+    ]);
+    return { items, total };
+  }
+
+  /**
+   * Bulk resolution of effective employment status (AD-16/AD-17) for a page
+   * of list results — two indexed bulk queries regardless of page size,
+   * never one query per row, matching the same query-budget discipline
+   * AD-24 requires of access-control's own graph traversals.
+   */
+  async resolveEmploymentStatuses(
+    userIds: string[],
+  ): Promise<Map<string, 'active' | 'dismissed'>> {
+    const result = new Map<string, 'active' | 'dismissed'>();
+    if (userIds.length === 0) return result;
+    for (const id of userIds) result.set(id, 'active');
+
+    const dueDepartures = await this.prisma.departure.findMany({
+      where: { userId: { in: userIds }, effectiveDate: { lte: new Date() } },
+      select: { userId: true },
+    });
+    for (const d of dueDepartures) result.set(d.userId, 'dismissed');
+
+    const openStatuses = await this.prisma.employmentStatus.findMany({
+      where: { userId: { in: userIds }, endDate: null },
+      select: { userId: true, status: true },
+    });
+    for (const s of openStatuses) {
+      if (s.status === 'dismissed') result.set(s.userId, 'dismissed');
+    }
+    return result;
+  }
+
   updateUser(id: string, fields: Record<string, unknown>): Promise<User> {
     return this.prisma.user.update({ where: { id }, data: fields });
+  }
+
+  /**
+   * Story 3.1/AD-19: the S1 PATCH's `position` write is one of the tracked
+   * changes that must produce a system `position_change` UserEvents row,
+   * written synchronously in the same transaction as the field update —
+   * never a separate follow-up write, never an event-bus listener. Applies
+   * `fields` unconditionally; only appends the event when `position` is
+   * both present in `fields` and actually different from the current
+   * value (a same-value PATCH is a no-op write, not a tracked change).
+   */
+  async updateUserTrackingPositionChange(
+    id: string,
+    fields: Record<string, unknown>,
+    actorId: string,
+  ): Promise<User> {
+    const before = await this.prisma.user.findUniqueOrThrow({
+      where: { id },
+    });
+    const positionChanged =
+      typeof fields.position === 'string' &&
+      fields.position !== before.position;
+
+    if (!positionChanged) {
+      return this.prisma.user.update({ where: { id }, data: fields });
+    }
+
+    const [updated] = await this.prisma.$transaction([
+      this.prisma.user.update({ where: { id }, data: fields }),
+      this.prisma.userEvents.create({
+        data: {
+          userId: id,
+          type: 'position_change',
+          source: 'system',
+          eventDate: new Date(),
+          details: toJson({ from: before.position, to: fields.position }),
+          createdBy: actorId,
+        },
+      }),
+    ]);
+    return updated;
   }
 
   async getEmploymentStatusValue(
@@ -225,6 +328,24 @@ export class ProfileDataRepository {
         details: toJson(fields.details),
         createdBy,
       },
+    });
+  }
+
+  async findEvent(userId: string, eventId: string) {
+    return this.prisma.userEvents.findFirst({
+      where: { id: eventId, userId, deletedAt: null },
+    });
+  }
+
+  /**
+   * AD-20: a correction is soft-delete-and-append, never an in-place update
+   * — this sets `deletedAt` only, excluding the row from listEvents' active
+   * read (`deletedAt: null`), and never hard-deletes the row.
+   */
+  async softDeleteEvent(eventId: string): Promise<void> {
+    await this.prisma.userEvents.update({
+      where: { id: eventId },
+      data: { deletedAt: new Date() },
     });
   }
 }
