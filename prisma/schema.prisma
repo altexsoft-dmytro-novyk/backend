@@ -53,6 +53,7 @@ model User {
   magicLinkTokens         MagicLinkToken[]
   userPolicies            UserPolicy[]
   fullProfileAccessGrants FullProfileAccessGrant[]
+  sectionRecords          SectionRecord[]
 
   @@index([departmentId])
   @@map("users")
@@ -304,6 +305,35 @@ model UserPolicy {
   @@id([userId, policyId])
   @@index([policyId])
   @@map("user_policies")
+}
+
+// Generic per-user, per-section record store for the profile sections
+// (S2-S8, S10, S12, S16) that have no dedicated domain model yet. Real
+// field-level projection for these sections is out of this facade's scope
+// (spec-access-control-facade-audience-resolution SPEC's own Non-goals:
+// "Field/record projection for profile, list, filter, export, or search
+// surfaces" belongs to user-management/profile feature work, not this
+// facade). This table exists only so the facade's /users/* routes have
+// something real to gate access to and round-trip through the E2E suite —
+// one flexible JSON payload per record, section-specific shape interpreted
+// in application code, not the domain layer. Singleton sections (S2, S3,
+// S4 non-employment-status fields, S12, S16) keep at most one live row per
+// (userId, section) via upsert-by-lookup; list sections (S5, S6, S7, S8)
+// append one row per record.
+model SectionRecord {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id])
+
+  section String
+  data    Json
+
+  createdBy String   @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId, section])
+  @@map("section_records")
 }
 
 // AD-10, AD-27: full profile access is a separate grant, independent of
