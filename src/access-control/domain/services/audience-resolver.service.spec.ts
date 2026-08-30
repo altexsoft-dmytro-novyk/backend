@@ -40,6 +40,14 @@ const COLIN = 'colin';
 const ERIN = 'erin';
 const FRANK = 'frank';
 
+const expectAudiences = (
+  audiences: Map<string, Set<string>>,
+  id: string,
+  expected: string[],
+) => {
+  expect([...(audiences.get(id) ?? [])].sort()).toEqual([...expected].sort());
+};
+
 describe('AudienceResolverService (Phase 0)', () => {
   describe('ACF-AU-01 · self', () => {
     it('resolves Self for the viewer and never queries the graph for that target', async () => {
@@ -48,7 +56,7 @@ describe('AudienceResolverService (Phase 0)', () => {
 
       const audiences = await resolver.resolve(ALICE, [ALICE]);
 
-      expect(audiences.get(ALICE)).toBe('self');
+      expectAudiences(audiences, ALICE, ['self']);
       // Self is exclusive: it must not be merged with a manager or PP column,
       // so the viewer's own id is excluded from the graph lookup entirely.
       expect(graph.lastTargets).not.toContain(ALICE);
@@ -61,7 +69,7 @@ describe('AudienceResolverService (Phase 0)', () => {
 
       const audiences = await resolver.resolve(BOB, [ALICE]);
 
-      expect(audiences.get(ALICE)).toBe('reporting');
+      expectAudiences(audiences, ALICE, ['reporting']);
     });
   });
 
@@ -71,7 +79,7 @@ describe('AudienceResolverService (Phase 0)', () => {
 
       const audiences = await resolver.resolve(CAROL, [ALICE]);
 
-      expect(audiences.get(ALICE)).toBe('reporting');
+      expectAudiences(audiences, ALICE, ['reporting']);
     });
   });
 
@@ -81,7 +89,7 @@ describe('AudienceResolverService (Phase 0)', () => {
 
       const audiences = await resolver.resolve(PAULA, [ALICE]);
 
-      expect(audiences.get(ALICE)).toBe('pp');
+      expectAudiences(audiences, ALICE, ['pp']);
     });
   });
 
@@ -91,7 +99,7 @@ describe('AudienceResolverService (Phase 0)', () => {
 
       const audiences = await resolver.resolve(COLIN, [ALICE]);
 
-      expect(audiences.get(ALICE)).toBe('colleague');
+      expectAudiences(audiences, ALICE, ['colleague']);
     });
   });
 
@@ -103,7 +111,7 @@ describe('AudienceResolverService (Phase 0)', () => {
 
       const audiences = await resolver.resolve(FRANK, [ERIN]);
 
-      expect(audiences.get(ERIN)).toBe('colleague');
+      expectAudiences(audiences, ERIN, ['colleague']);
     });
   });
 
@@ -113,7 +121,7 @@ describe('AudienceResolverService (Phase 0)', () => {
 
       const audiences = await resolver.resolve(HANA, [ALICE]);
 
-      expect(audiences.get(ALICE)).toBe('colleague');
+      expectAudiences(audiences, ALICE, ['colleague']);
     });
   });
 
@@ -136,12 +144,11 @@ describe('AudienceResolverService (Phase 0)', () => {
 
       const audiences = await resolver.resolve(BOB, [ALICE, ERIN, COLIN, BOB]);
 
-      expect([...audiences.entries()].sort()).toEqual([
-        [ALICE, 'reporting'],
-        [BOB, 'self'],
-        [COLIN, 'colleague'],
-        [ERIN, 'pp'],
-      ]);
+      expectAudiences(audiences, ALICE, ['reporting']);
+      expectAudiences(audiences, BOB, ['self']);
+      expectAudiences(audiences, COLIN, ['colleague']);
+      expectAudiences(audiences, ERIN, ['pp']);
+      expect(audiences.size).toBe(4);
       expect(graph.calls).toBe(1);
     });
 
@@ -155,17 +162,14 @@ describe('AudienceResolverService (Phase 0)', () => {
       expect(graph.lastTargets).toEqual([ALICE]);
     });
 
-    it('prefers the reporting label when a viewer is both manager and PP', async () => {
-      // Phase 0 returns exactly one label per target; both grant identically
-      // under the provisional mapping, so precedence is a reporting-first
-      // convention, not a permission decision.
+    it('returns both reporting and PP when a viewer holds both audiences', async () => {
       const resolver = new AudienceResolverService(
         new FakeGraph([ALICE], [ALICE]),
       );
 
       const audiences = await resolver.resolve(BOB, [ALICE]);
 
-      expect(audiences.get(ALICE)).toBe('reporting');
+      expectAudiences(audiences, ALICE, ['pp', 'reporting']);
     });
   });
 });

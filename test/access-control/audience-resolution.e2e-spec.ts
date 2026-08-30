@@ -46,8 +46,12 @@ class FacadeBackedAccessControlAdapter implements AccessControlPort {
     const audiences = await this.facade.resolveAudiences(userId, [
       targetUserId,
     ]);
-    const audience = audiences.get(targetUserId);
-    return audience === 'self' || audience === 'reporting' || audience === 'pp';
+    const labels = audiences.get(targetUserId);
+    return (
+      labels?.has('self') === true ||
+      labels?.has('reporting') === true ||
+      labels?.has('pp') === true
+    );
   }
 }
 

@@ -9,10 +9,9 @@ import {
  * Resolves the Phase-0 audience of one viewer over any number of targets
  * (AD-10). Live, bulk, fail-closed, never persisted.
  *
- * Phase 0 returns exactly one label per target. Reporting is preferred over PP
- * when a viewer holds both — under the current mapping the two grant
- * identically, so this is a labelling convention, not a permission decision.
- * The best-of merge across section columns arrives with the section matrix.
+ * Returns every applicable audience per target so downstream merge can take
+ * the best column per section (§3.2 multi-audience merge). Self is exclusive;
+ * Colleague is the floor when nothing else applies.
  */
 @Injectable()
 export class AudienceResolverService {
@@ -24,8 +23,8 @@ export class AudienceResolverService {
   async resolve(
     viewerId: string,
     employeeIds: string[],
-  ): Promise<Map<string, Audience>> {
-    const audiences = new Map<string, Audience>();
+  ): Promise<Map<string, Set<Audience>>> {
+    const audiences = new Map<string, Set<Audience>>();
 
     // Degenerate case first: an empty bulk must cost nothing at all — no graph
     // walk, no query, no round trip (§7's 500-record budget depends on it).
@@ -41,7 +40,7 @@ export class AudienceResolverService {
     const others = targets.filter((id) => id !== viewerId);
     if (others.length === 0) {
       for (const id of targets) {
-        audiences.set(id, 'self');
+        audiences.set(id, new Set<Audience>(['self']));
       }
       return audiences;
     }
@@ -52,15 +51,22 @@ export class AudienceResolverService {
 
     for (const id of targets) {
       if (id === viewerId) {
-        audiences.set(id, 'self');
-      } else if (reporting.has(id)) {
-        audiences.set(id, 'reporting');
-      } else if (pp.has(id)) {
-        audiences.set(id, 'pp');
-      } else {
-        // No qualifying relationship — Colleague is the floor, never a gap.
-        audiences.set(id, 'colleague');
+        audiences.set(id, new Set<Audience>(['self']));
+        continue;
       }
+
+      const labels = new Set<Audience>();
+      if (reporting.has(id)) {
+        labels.add('reporting');
+      }
+      if (pp.has(id)) {
+        labels.add('pp');
+      }
+      if (labels.size === 0) {
+        // No qualifying relationship — Colleague is the floor, never alongside another audience.
+        labels.add('colleague');
+      }
+      audiences.set(id, labels);
     }
 
     return audiences;

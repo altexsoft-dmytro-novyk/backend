@@ -8,9 +8,9 @@ import { AudienceResolverService } from '../domain/services/audience-resolver.se
  * `canAccessSection` (the §3.2 matrix) arrive with their own slices, and a
  * consumer must not simulate either by reading policy rows or role flags.
  *
- * Callers receive a label per target and decide nothing else from it: what a
- * given audience may see is the owning context's projection contract, which may
- * narrow this result but never widen it.
+ * Callers receive every applicable audience per target and decide nothing else
+ * from it: what a given audience may see is the owning context's projection
+ * contract, which may narrow this result but never widen it.
  */
 @Injectable()
 export class AccessControlFacade {
@@ -25,7 +25,7 @@ export class AccessControlFacade {
   resolveAudiences(
     viewerId: string,
     employeeIds: string[],
-  ): Promise<Map<string, Audience>> {
+  ): Promise<Map<string, Set<Audience>>> {
     return this.resolver.resolve(viewerId, employeeIds);
   }
 }
