@@ -2,7 +2,6 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import {
-  assignToProject,
   attachPermissionToPolicy,
   attachPolicyToUser,
   bootstrapApp,
@@ -10,9 +9,7 @@ import {
   createDepartment,
   createDirectEdge,
   createPolicy,
-  createProject,
   createUser,
-  deleteProjectBreakingReferences,
   ensurePermission,
   newRunId,
 } from '../fixtures/graph';
@@ -34,8 +31,8 @@ describe('Fail-closed — AD-11/AD-12 (e2e)', () => {
   let carolToken: string;
 
   // AC-FC-02
-  let peteToken: string;
-  let fc02ProjectId: string;
+  let fc02AliceId: string;
+  let bobToken: string;
 
   // AC-FC-03
   let rootId: string;
@@ -63,16 +60,24 @@ describe('Fail-closed — AD-11/AD-12 (e2e)', () => {
     const topLee = await createUser(prisma, runId, 'TopLee', dept.id);
     topLeeToken = bearer(signSessionToken(topLee.id));
 
-    // AC-FC-02: Pete is PM on a project shared with Alice via a real
-    // ProjectAssignment join (the closest real substitute — the schema has
-    // no separate project-management "policy" table yet; Project-line
-    // ownership/policy modeling is deferred per the architecture spine).
-    const pete = await createUser(prisma, runId, 'Pete', dept.id);
-    peteToken = bearer(signSessionToken(pete.id));
-    const project = await createProject(prisma, runId);
-    fc02ProjectId = project.id;
-    await assignToProject(prisma, project.id, aliceId);
-    await assignToProject(prisma, project.id, pete.id);
+    // AC-FC-02: dedicated Alice/Bob pair (isolated from AC-FC-01's chain, so
+    // orphaning the edge here can't affect AC-FC-01's already-run
+    // assertions or Carol's transitive access). Bob is Alice's direct
+    // manager — a real Phase 1 Reporting-line positive grant — with a
+    // seeded certificate on Alice's S5 so the baseline read has real data.
+    const fc02Alice = await createUser(prisma, runId, 'Alice2', dept.id);
+    fc02AliceId = fc02Alice.id;
+    const bob2 = await createUser(prisma, runId, 'Bob2', dept.id);
+    bobToken = bearer(signSessionToken(bob2.id));
+    await createDirectEdge(prisma, fc02AliceId, bob2.id);
+    await prisma.sectionRecord.create({
+      data: {
+        userId: fc02AliceId,
+        section: 's5',
+        data: { type: 'certificate', title: 'AWS Certified' },
+        createdBy: fc02AliceId,
+      },
+    });
 
     // AC-FC-03: Root holds the seeded bootstrap HR Admin FR; Ida holds a
     // second, independent attachment of the same policy so she can revoke
@@ -124,26 +129,34 @@ describe('Fail-closed — AD-11/AD-12 (e2e)', () => {
     });
   });
 
-  describe('AC-FC-02 · Orphaned policy row after target delete', () => {
-    it('Test 1 — baseline effective grant (live policy join)', async () => {
+  describe('AC-FC-02 · Orphaned relationship edge after hard-delete', () => {
+    it('Test 1 — baseline effective grant (live relationship)', async () => {
       const res = await request(app.getHttpServer())
-        .get(`/users/${aliceId}/documents`)
-        .set('authorization', peteToken)
+        .get(`/users/${fc02AliceId}/documents`)
+        .set('authorization', bobToken)
         .send({});
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('documents');
+      const documents = (res.body as { documents: Array<{ type: string }> })
+        .documents;
+      expect(
+        documents.some((d) => d.type === 'cv' || d.type === 'certificate'),
+      ).toBe(true);
     });
 
     it('Test 2 — after orphan', async () => {
-      // stateChange: hard-delete the project target so the
-      // ProjectAssignment join becomes orphaned (zero live members) —
-      // same FK-break technique as the audience-derivation suite's broken
-      // reports-to edge, since ON DELETE RESTRICT normally blocks this.
-      await deleteProjectBreakingReferences(prisma, fc02ProjectId);
+      // stateChange: hard-delete Bob's direct Relationship row over Alice —
+      // not via the normal DELETE-then-POST reassignment flow, simulating a
+      // corrupted/orphaned edge (e.g. a partial migration or manual fix).
+      // Relationship rows have no inbound FK references, so a plain delete
+      // (no RESTRICT to bypass) is enough.
+      await prisma.relationship.deleteMany({
+        where: { subjectUserId: fc02AliceId, type: 'direct' },
+      });
 
       const res = await request(app.getHttpServer())
-        .get(`/users/${aliceId}/documents`)
-        .set('authorization', peteToken)
+        .get(`/users/${fc02AliceId}/documents`)
+        .set('authorization', bobToken)
         .send({});
       expect(res.status).toBe(404);
       expect(res.body).not.toHaveProperty('documents');

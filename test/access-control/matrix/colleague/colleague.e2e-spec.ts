@@ -153,11 +153,15 @@ describe('Matrix — Colleague column, §3.2 (e2e)', () => {
   });
 
   it('AC-M-S13-CO-R-DEN: colleague read s13 denied', async () => {
+    // Corrected 2026-08-30: the original GET /users/:id (aggregate) always
+    // 200s since S1 is colleague-readable — S13's dedicated read route is
+    // the actual section-specific surface that can 404.
     const res = await request(app.getHttpServer())
-      .get(`/users/${aliceId}`)
+      .get(`/mentorship-pairs?userId=${aliceId}`)
       .set('authorization', colinToken)
       .send({});
     expect(res.status).toBe(404);
+    expect(res.body).not.toHaveProperty('pairs');
   });
 
   it('AC-M-S13-CO-W-DEN: colleague write s13 denied (no access)', async () => {

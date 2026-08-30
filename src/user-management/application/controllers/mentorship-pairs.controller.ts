@@ -2,14 +2,17 @@ import {
   Body,
   Controller,
   ForbiddenException,
+  Get,
   NotFoundException,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
 import { AccessControlAction } from '../../../access-control/application/actions/access-control.action';
 import { SessionAuthGuard } from '../../../access-control/application/guards/session-auth.guard';
 import type { AuthenticatedRequest } from '../../../access-control/application/guards/session-auth.guard';
+import { assertSectionRead } from '../section-access.helper';
 import { ProfileDataRepository } from '../../infrastructure/profile-data.repository';
 
 // S13 mentorship-pair assignment — a global resource (§4.11), not nested
@@ -23,6 +26,19 @@ export class MentorshipPairsController {
     private readonly accessControl: AccessControlAction,
     private readonly repo: ProfileDataRepository,
   ) {}
+
+  @Get()
+  async listForUser(
+    @Req() req: AuthenticatedRequest,
+    @Query('userId') userId: string | undefined,
+  ) {
+    if (!userId || !(await this.repo.getUser(userId))) {
+      throw new NotFoundException();
+    }
+    await assertSectionRead(this.accessControl, req.actorId, userId, 's13');
+    const records = await this.repo.listSectionRecords(userId, 's13');
+    return { pairs: records.map((r) => ({ id: r.id, ...r.data })) };
+  }
 
   @Post()
   async create(
