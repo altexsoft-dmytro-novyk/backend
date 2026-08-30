@@ -1,4 +1,8 @@
 import { Module } from '@nestjs/common';
+import { OrgGraphQueryAction } from './application/actions/org-graph-query.action';
+import { ORG_GRAPH_REPOSITORY_PORT } from './domain/interfaces/org-graph-repository.port';
+import { OrgGraphQueryService } from './domain/services/org-graph-query.service';
+import { OrgGraphRepository } from './infrastructure/org-graph.repository';
 
 // AD-3 module-boundary corollary: the narrow, guard-free module that will
 // export user-management's org-graph read service(s) for access-control's
@@ -8,12 +12,13 @@ import { Module } from '@nestjs/common';
 // UserManagementModule, so the two capability-level edges (authorize vs.
 // supply-facts) terminate in different modules and neither imports the
 // other back.
-//
-// Empty scaffold for now — the org-graph query service and its exports land
-// with the story that implements OrgGraphReaderPort.
 @Module({
   imports: [],
-  providers: [],
-  exports: [],
+  providers: [
+    { provide: ORG_GRAPH_REPOSITORY_PORT, useClass: OrgGraphRepository },
+    OrgGraphQueryService,
+    OrgGraphQueryAction,
+  ],
+  exports: [OrgGraphQueryAction],
 })
 export class UserManagementQueryModule {}

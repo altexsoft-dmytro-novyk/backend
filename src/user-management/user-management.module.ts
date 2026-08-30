@@ -1,5 +1,9 @@
 import { Module } from '@nestjs/common';
 import { AccessControlModule } from '../access-control/access-control.module';
+import { ActionItemsController } from './application/controllers/action-items.controller';
+import { MentorshipPairsController } from './application/controllers/mentorship-pairs.controller';
+import { UsersController } from './application/controllers/users.controller';
+import { ProfileDataRepository } from './infrastructure/profile-data.repository';
 
 // AD-3: user-management -> access-control for authorization — every
 // controller/action in this module calls AccessControl.isAllowed /
@@ -10,13 +14,14 @@ import { AccessControlModule } from '../access-control/access-control.module';
 // guards. AccessControlModule itself imports only UserManagementQueryModule
 // (see that module and access-control.module.ts), never this module back —
 // so this import does not create a NestJS circular import.
-//
-// Empty scaffold for now — controllers/actions/domain services land with
-// their respective stories.
 @Module({
   imports: [AccessControlModule],
-  providers: [],
-  controllers: [],
+  providers: [ProfileDataRepository],
+  controllers: [
+    UsersController,
+    MentorshipPairsController,
+    ActionItemsController,
+  ],
   exports: [],
 })
 export class UserManagementModule {}
