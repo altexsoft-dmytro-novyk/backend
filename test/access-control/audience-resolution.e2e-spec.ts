@@ -135,6 +135,8 @@ describe('Access Control Phase 0 — audience resolution over GET /users/:id (e2
       isActive: false,
     });
     await createUser('Frank', { position: 'Director' });
+    await createUser('CycleA');
+    await createUser('CycleB');
 
     await prisma.relationship.createMany({
       data: [
@@ -148,6 +150,8 @@ describe('Access Control Phase 0 — audience resolution over GET /users/:id (e2
         { userId: ids.Paula, type: 'direct', reportsToUserId: ids.Hana },
         { userId: ids.Erin, type: 'direct', reportsToUserId: ids.InactiveMgr },
         { userId: ids.InactiveMgr, type: 'direct', reportsToUserId: ids.Frank },
+        { userId: ids.CycleA, type: 'direct', reportsToUserId: ids.CycleB },
+        { userId: ids.CycleB, type: 'direct', reportsToUserId: ids.CycleA },
       ],
     });
   });
@@ -230,6 +234,46 @@ describe('Access Control Phase 0 — audience resolution over GET /users/:id (e2
         .get(`/users/${ids.Alice}`)
         .set('authorization', asPersona('Hana'))
         .expect(403);
+    });
+  });
+
+  describe('ACF-FC-04 · cyclic direct chain terminates', () => {
+    it('returns Colleague for an unrelated viewer instead of hanging on a cycle', async () => {
+      const facade = app.get(AccessControlFacade);
+
+      // The database accepts a two-person cycle (one direct row each, no
+      // self-edge). UNION deduplicates recursive rows and stops; UNION ALL
+      // spins forever with statement_timeout = 0 on this database. Promise.race
+      // is used instead of SET LOCAL statement_timeout because the facade opens
+      // its own transaction on a pooled connection — a timeout set on the test
+      // connection would not reliably reach the resolver's query.
+      let hangTimer: ReturnType<typeof setTimeout> | undefined;
+      const hangGuard = new Promise<never>((_, reject) => {
+        hangTimer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                'resolveAudiences did not complete within 2s — check recursive UNION',
+              ),
+            ),
+          2000,
+        );
+      });
+
+      try {
+        const audiences = await Promise.race([
+          facade.resolveAudiences(ids.Colin, [ids.CycleA]),
+          hangGuard,
+        ]);
+
+        expect([...(audiences.get(ids.CycleA) ?? [])].sort()).toEqual([
+          'colleague',
+        ]);
+      } finally {
+        if (hangTimer !== undefined) {
+          clearTimeout(hangTimer);
+        }
+      }
     });
   });
 

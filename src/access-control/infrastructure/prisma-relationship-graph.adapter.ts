@@ -38,7 +38,9 @@ export class PrismaRelationshipGraphAdapter implements RelationshipGraphPort {
       async (tx) => {
         // Walk upward from each target through its `direct` chain and test
         // whether the viewer appears among its ancestors. Cost bounds to chain
-        // depth × target count, not the viewer's subtree size.
+        // depth × target count, not the viewer's subtree size. The recursive
+        // term must be UNION, not UNION ALL: deduplication is what terminates
+        // the walk when the graph contains a cycle the schema does not reject.
         //
         // The join on `users` is the fail-closed filter: a deactivated person
         // is neither a reachable node nor a bridge, so the walk stops there
@@ -51,7 +53,7 @@ export class PrismaRelationshipGraphAdapter implements RelationshipGraphPort {
               JOIN "users" u ON u."id" = r."userId" AND u."isActive" = TRUE
              WHERE r."type" = 'direct'::"RelationshipType"
                AND r."userId" IN (${ids})
-            UNION ALL
+            UNION
             SELECT c.target_id, r."reportsToUserId"
               FROM chain c
               JOIN "relationships" r
