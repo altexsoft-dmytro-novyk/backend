@@ -18,6 +18,14 @@ import {
 
 // Scenarios: docs/test-cases/access-control-foundation/
 //
+// Approved (AD-1 round 2): Anna Pikula, 2026-08-30 — on a walkthrough of the
+// suite's fixture, its ten requests and what each asserts, not a line read.
+// Raised at approval time and accepted: ACF-FC-01's fixture places the
+// deactivated user only in the mid-chain position, so the suite passes for a
+// weaker reason than the scenario claims. That and the cross-context import of
+// ACCESS_CONTROL_PORT are recorded in
+// _bmad-output/implementation-artifacts/access-control/deferred-work.md.
+//
 // Why this suite overrides a provider (and why that is not a fake):
 // `ACCESS_CONTROL_PORT` is bound to `InterimAccessControlAdapter` inside
 // `user-management.module.ts`, which Access Control must not edit (AD-2).
