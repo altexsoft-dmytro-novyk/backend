@@ -9,7 +9,10 @@ export interface OrgGraphRepositoryPort {
   /**
    * AD-24: one indexed recursive-CTE query. Fail-closed: does not continue
    * the walk past a node whose user row is gone (broken/orphaned edge) or
-   * whose departure is already effective (AD-16/17 due-node cutoff).
+   * whose departure is already effective (AD-16/17 due-node cutoff). True
+   * for either the transitive `direct` reports-to chain, OR (Story 4.3)
+   * actorId managing targetId's department or any ancestor department in
+   * its tree ("Department B and nested departments").
    */
   isInReportingLine(actorId: string, targetId: string): Promise<boolean>;
 

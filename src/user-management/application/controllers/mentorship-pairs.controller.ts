@@ -69,7 +69,10 @@ export class MentorshipPairsController {
     const created = await this.repo.createSectionRecord(
       mentorId,
       's13',
-      { kind: 'pair', mentorId, menteeId: body.menteeId },
+      // `status: 'active'` is a named consumer, not speculative: Epic 5's
+      // departure executor (DepartureExecutorService) closes exactly this
+      // field when either party departs (AD-16 side-effect bundle).
+      { kind: 'pair', mentorId, menteeId: body.menteeId, status: 'active' },
       req.actorId,
     );
     return { id: created.id, ...created.data };

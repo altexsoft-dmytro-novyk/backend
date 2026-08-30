@@ -20,11 +20,29 @@ import { AccessControlAction } from '../../../access-control/application/actions
 import { SessionAuthGuard } from '../../../access-control/application/guards/session-auth.guard';
 import type { AuthenticatedRequest } from '../../../access-control/application/guards/session-auth.guard';
 import { Prisma } from '../../../generated/prisma/client';
+import {
+  DeparturePendingError,
+  DepartureService,
+  StillManagingError,
+  TargetNotFoundError,
+} from '../../domain/services/departure.service';
+import { SelfAssignmentError } from '../../domain/services/relationship-write.service';
+import { RelationshipWriteService } from '../../domain/services/relationship-write.service';
 import { ProfileDataRepository } from '../../infrastructure/profile-data.repository';
 import {
   assertSectionRead,
   assertSectionWrite,
 } from '../section-access.helper';
+
+// Epic 4/AD-25: the four organisational-relationship fields a
+// "change organisational relationships" holder may change through this one
+// dedicated endpoint, never through the general S1 PATCH.
+const RELATIONSHIP_FIELDS = [
+  'manager',
+  'people_partner',
+  'department',
+] as const;
+type RelationshipField = (typeof RELATIONSHIP_FIELDS)[number];
 
 const DERIVED_S1_FIELDS = [
   'managerId',
@@ -60,6 +78,8 @@ export class UsersController {
   constructor(
     private readonly accessControl: AccessControlAction,
     private readonly repo: ProfileDataRepository,
+    private readonly relationshipWrite: RelationshipWriteService,
+    private readonly departure: DepartureService,
   ) {}
 
   // --- /users list (AC-AD-12 empty bulk, AC-AD-15 active-list exclusion) ---
@@ -831,23 +851,146 @@ export class UsersController {
   }
 
   // --- Relationships (S11 display only; changes are a distinct, dedicated
-  // operation per §2.1 — never granted through this facade in Phase 1,
-  // since no actor in this build holds the "change organisational
-  // relationships" permission) ---
+  // operation per §2.1/AD-25, gated on the "change organisational
+  // relationships" functional permission — never through the general S1
+  // PATCH, and independent of S11's own read/write matrix cell). Epic 4:
+  // Stories 4.1 (manager), 4.2 (People Partner), 4.3 (department; the
+  // department-manager half of 4.3 lives at
+  // POST /departments/:id/manager since its subject is a department, not
+  // this user). ---
 
   @Post(':id/relationships')
   async postRelationship(
     @Req() req: AuthenticatedRequest,
     @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
   ) {
     await this.requireTarget(id);
-    const level = await this.accessControl.canAccessSection(
+
+    // AD-23 leak-safety ordering, preserved from this endpoint's original
+    // stub: a no-S11-access actor gets 404 before anything else, an actor
+    // who can at least see S11 but lacks the dedicated permission gets 403
+    // — both independent of whatever the request body contains, so an
+    // unauthorized caller never learns the accepted body shape.
+    const s11Level = await this.accessControl.canAccessSection(
       req.actorId,
       id,
       's11',
     );
-    if (level === 'none') throw new NotFoundException();
-    throw new ForbiddenException();
+    if (s11Level === 'none') throw new NotFoundException();
+
+    // AD-9/CAP-3: a distinct functional permission from S11's matrix
+    // read/write cell — holding S11 write access (e.g. as Bob, Alice's
+    // direct manager) does NOT by itself authorize changing the edge
+    // itself; only an explicit "change organisational relationships"
+    // Policy attachment does.
+    const allowed = await this.accessControl.isAllowed(
+      req.actorId,
+      'change organisational relationships',
+    );
+    if (!allowed) throw new ForbiddenException();
+
+    const field = body.field as RelationshipField | undefined;
+    if (!field || !RELATIONSHIP_FIELDS.includes(field)) {
+      throw new BadRequestException(
+        'field must be one of ' + RELATIONSHIP_FIELDS.join(', '),
+      );
+    }
+    const value = (body.value as string | null | undefined) ?? null;
+    const expectedCurrent =
+      'expectedCurrent' in body
+        ? (body.expectedCurrent as string | null)
+        : undefined;
+
+    if (value !== null) {
+      const exists =
+        field === 'department'
+          ? await this.relationshipWrite.departmentExists(value)
+          : await this.relationshipWrite.userExists(value);
+      if (!exists) throw new NotFoundException();
+    }
+
+    try {
+      const result = await (() => {
+        switch (field) {
+          case 'manager':
+            return this.relationshipWrite.changeManager(
+              req.actorId,
+              id,
+              value,
+              expectedCurrent,
+            );
+          case 'people_partner':
+            return this.relationshipWrite.changePeoplePartner(
+              req.actorId,
+              id,
+              value,
+              expectedCurrent,
+            );
+          case 'department':
+            if (value === null) {
+              throw new BadRequestException(
+                'department cannot be cleared to null',
+              );
+            }
+            return this.relationshipWrite.changeDepartment(
+              req.actorId,
+              id,
+              value,
+              expectedCurrent,
+            );
+        }
+      })();
+
+      if (result.outcome === 'conflict') throw new ConflictException();
+      if (result.outcome === 'not_found') throw new NotFoundException();
+      return { field, value: result.value };
+    } catch (err) {
+      if (err instanceof SelfAssignmentError) throw new ForbiddenException();
+      throw err;
+    }
+  }
+
+  // --- Departure (Epic 5, AD-15) ---
+
+  @Post(':id/departure')
+  async postDeparture(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    const allowed = await this.accessControl.isAllowed(
+      req.actorId,
+      'record a departure',
+    );
+    if (!allowed) throw new ForbiddenException();
+
+    const effectiveDate = new Date(body.effectiveDate as string);
+    if (Number.isNaN(effectiveDate.getTime())) {
+      throw new BadRequestException('effectiveDate must be a valid date');
+    }
+    const reason = typeof body.reason === 'string' ? body.reason : '';
+
+    try {
+      const created = await this.departure.recordDeparture(
+        id,
+        effectiveDate,
+        reason,
+        req.actorId,
+      );
+      return {
+        id: created.id,
+        userId: created.userId,
+        effectiveDate: created.effectiveDate,
+        reason: created.reason,
+        appliedAt: created.appliedAt,
+      };
+    } catch (err) {
+      if (err instanceof TargetNotFoundError) throw new NotFoundException();
+      if (err instanceof StillManagingError) throw new ConflictException();
+      if (err instanceof DeparturePendingError) throw new ConflictException();
+      throw err;
+    }
   }
 
   // --- helpers ---

@@ -8,6 +8,16 @@ import { OrgGraphRepositoryPort } from '../domain/interfaces/org-graph-repositor
 // NOT EXISTS departures guard on the frontier node stops the walk from
 // propagating past a due intermediate manager (AC-AD-16/17) without
 // blocking that node's own (already-reached) ancestors.
+//
+// Epic 4 Story 4.3's AC ("the new manager receives Reporting-line access to
+// Department B and nested departments on the next request") folds a second
+// traversal into this same "is actor in target's Reporting line" query: a
+// `dept_chain` CTE walks target's department upward through `parentId`
+// (target's own department, then its parent, and so on), and `present` is
+// true if either the person-graph chain reaches the actor OR the actor
+// manages any department on that walk. This keeps the two traversals in
+// one indexed query (AD-24) rather than a second port method the audience
+// resolver would have to remember to call.
 const REPORTING_LINE_SQL = `
 WITH RECURSIVE chain(node_id, depth) AS (
   SELECT r.holder_user_id, 1
@@ -26,8 +36,30 @@ WITH RECURSIVE chain(node_id, depth) AS (
       SELECT 1 FROM departures d
       WHERE d.user_id = c.node_id AND d.effective_date <= now()
     )
+),
+dept_chain(dept_id, depth) AS (
+  SELECT u.department_id, 1
+  FROM users u
+  WHERE u.id = $1::uuid
+
+  UNION ALL
+
+  SELECT d.parent_id, dc.depth + 1
+  FROM dept_chain dc
+  JOIN departments d ON d.id = dc.dept_id
+  WHERE dc.depth < 100 AND d.parent_id IS NOT NULL
 )
-SELECT EXISTS (SELECT 1 FROM chain WHERE node_id = $2::uuid) AS present;
+SELECT EXISTS (
+  SELECT 1 FROM chain WHERE node_id = $2::uuid
+  UNION ALL
+  SELECT 1 FROM dept_chain dc
+  JOIN departments d ON d.id = dc.dept_id
+  WHERE d.manager_id = $2::uuid
+    AND NOT EXISTS (
+      SELECT 1 FROM departures dep
+      WHERE dep.user_id = $2::uuid AND dep.effective_date <= now()
+    )
+) AS present;
 `;
 
 @Injectable()

@@ -1,11 +1,20 @@
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AccessControlModule } from '../access-control/access-control.module';
 import { ActionItemsController } from './application/controllers/action-items.controller';
 import { AuthController } from './application/controllers/auth.controller';
+import { DepartmentsController } from './application/controllers/departments.controller';
 import { MentorshipPairsController } from './application/controllers/mentorship-pairs.controller';
 import { UsersController } from './application/controllers/users.controller';
+import { DEPARTURE_REPOSITORY_PORT } from './domain/interfaces/departure-repository.port';
+import { RELATIONSHIP_WRITE_REPOSITORY_PORT } from './domain/interfaces/relationship-write-repository.port';
+import { DepartureService } from './domain/services/departure.service';
+import { RelationshipWriteService } from './domain/services/relationship-write.service';
+import { DepartureExecutorService } from './infrastructure/departure-executor.service';
+import { DepartureRepository } from './infrastructure/departure.repository';
 import { MagicLinkRepository } from './infrastructure/magic-link.repository';
 import { ProfileDataRepository } from './infrastructure/profile-data.repository';
+import { RelationshipWriteRepository } from './infrastructure/relationship-write.repository';
 
 // AD-3: user-management -> access-control for authorization — every
 // controller/action in this module calls AccessControl.isAllowed /
@@ -17,13 +26,25 @@ import { ProfileDataRepository } from './infrastructure/profile-data.repository'
 // (see that module and access-control.module.ts), never this module back —
 // so this import does not create a NestJS circular import.
 @Module({
-  imports: [AccessControlModule],
-  providers: [ProfileDataRepository, MagicLinkRepository],
+  imports: [AccessControlModule, ScheduleModule.forRoot()],
+  providers: [
+    ProfileDataRepository,
+    MagicLinkRepository,
+    RelationshipWriteService,
+    {
+      provide: RELATIONSHIP_WRITE_REPOSITORY_PORT,
+      useClass: RelationshipWriteRepository,
+    },
+    DepartureService,
+    { provide: DEPARTURE_REPOSITORY_PORT, useClass: DepartureRepository },
+    DepartureExecutorService,
+  ],
   controllers: [
     UsersController,
     MentorshipPairsController,
     ActionItemsController,
     AuthController,
+    DepartmentsController,
   ],
   exports: [],
 })

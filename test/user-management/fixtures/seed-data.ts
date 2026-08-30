@@ -214,6 +214,42 @@ export async function ensureHrAdminPolicy(
   return { id: policy.id };
 }
 
+/**
+ * Generic version of ensureHrAdminPolicy above, for the Epic 4/5 functional
+ * permissions ("change organisational relationships", "record a
+ * departure", "edit the career timeline", ...) — same idempotent
+ * upsert-by-name shape (AD-9: these are real, singular closed-catalog rows,
+ * not run-scoped fixture values), parameterized by policy/permission name
+ * instead of hardcoding "HR Admin"/"manage_roles".
+ */
+export async function ensurePolicyWithPermission(
+  prisma: PrismaService,
+  policyName: string,
+  permissionName: string,
+): Promise<{ id: string }> {
+  const policy = await prisma.policy.upsert({
+    where: { name: policyName },
+    update: {},
+    create: { name: policyName },
+  });
+  const permission = await prisma.permission.upsert({
+    where: { name: permissionName },
+    update: {},
+    create: { name: permissionName },
+  });
+  await prisma.policyPermission.upsert({
+    where: {
+      policyId_permissionId: {
+        policyId: policy.id,
+        permissionId: permission.id,
+      },
+    },
+    update: {},
+    create: { policyId: policy.id, permissionId: permission.id },
+  });
+  return { id: policy.id };
+}
+
 export async function attachPolicyToUser(
   prisma: PrismaService,
   userId: string,

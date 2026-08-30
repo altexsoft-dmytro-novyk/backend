@@ -10,10 +10,11 @@ export interface OrgGraphReaderPort {
 
   /**
    * True if actorId is anywhere in targetId's transitive Reporting line
-   * (recursive `direct` reports-to walk, AD-24 one indexed query). Fail
-   * closed on a broken/orphaned edge or a due intermediate node (AD-16/17):
-   * the walk does not continue past a node whose user row is gone or whose
-   * departure is already effective.
+   * (recursive `direct` reports-to walk, AD-24 one indexed query) OR
+   * actorId manages targetId's department or any ancestor department
+   * (Story 4.3). Fail closed on a broken/orphaned edge or a due
+   * intermediate node (AD-16/17): the walk does not continue past a node
+   * whose user row is gone or whose departure is already effective.
    */
   isInReportingLine(actorId: string, targetId: string): Promise<boolean>;
 
