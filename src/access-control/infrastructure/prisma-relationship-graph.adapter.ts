@@ -36,6 +36,25 @@ export class PrismaRelationshipGraphAdapter implements RelationshipGraphPort {
     //   running database, not assumed.
     const { reporting, pp } = await this.prisma.$transaction(
       async (tx) => {
+        // A ceiling on the walk itself, not a performance target. §7 gives the
+        // whole request 2 seconds for 500 records, so a resolution still
+        // running at that point is not slow — it is wrong, and the shapes that
+        // produce it are pathological data the schema still permits (a cycle in
+        // the reporting chain is insertable today: the partial unique index
+        // allows one `direct` row each and the CHECK only forbids self-
+        // reference). Without this the request does not fail, it hangs: the
+        // connection default is `statement_timeout = 0`, so a spinning
+        // recursion holds its connection until the client disconnects — that
+        // takes the endpoint down instead of denying one request. Measured:
+        // with the guard, a cyclic graph fails the run in 3s; without it, the
+        // suite ran 10 minutes and left backends spinning after Jest was killed.
+        //
+        // A timeout surfaces as a thrown error, never as an empty map, so a
+        // degraded resolution cannot be mistaken for "no audience applies".
+        // $executeRawUnsafe because SET takes no bind parameters; the value is
+        // a literal constant, never interpolated input.
+        await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '2s'`);
+
         // Walk upward from each target through its `direct` chain and test
         // whether the viewer appears among its ancestors. Cost bounds to chain
         // depth × target count, not the viewer's subtree size. The recursive
