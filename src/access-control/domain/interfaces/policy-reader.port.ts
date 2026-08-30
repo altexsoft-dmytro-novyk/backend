@@ -11,8 +11,19 @@ export interface PolicyReaderPort {
   /** True if userId has at least one UserPolicy row (any policy at all). */
   hasAnyPolicyAttached(userId: string): Promise<boolean>;
 
-  /** AD-9: the admin-facing functional-role catalog. */
-  listPolicies(): Promise<{ id: string; name: string }[]>;
+  /**
+   * AD-9: the admin-facing functional-role catalog, with holder counts and
+   * identities — um-seed-03 (FR-1/AD-12) reads this to prove exactly one
+   * bootstrap user holds HR Admin.
+   */
+  listPolicies(): Promise<
+    {
+      id: string;
+      name: string;
+      holderCount: number;
+      holders: { id: string; workEmail: string }[];
+    }[]
+  >;
 
   /** Detaches one policy from one user; no-op (does not throw) if absent. */
   revokeUserPolicy(userId: string, policyId: string): Promise<void>;

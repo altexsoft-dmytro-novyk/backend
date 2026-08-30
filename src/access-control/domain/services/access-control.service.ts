@@ -103,7 +103,14 @@ export class AccessControlService {
   }
 
   /** AD-9: /roles admin catalog read. */
-  async listPolicies(): Promise<{ id: string; name: string }[]> {
+  async listPolicies(): Promise<
+    {
+      id: string;
+      name: string;
+      holderCount: number;
+      holders: { id: string; workEmail: string }[];
+    }[]
+  > {
     return this.policyReader.listPolicies();
   }
 

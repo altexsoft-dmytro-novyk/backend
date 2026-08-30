@@ -9,6 +9,7 @@ import {
   cleanupRun,
   createDepartment,
   createSeededUser,
+  detachPolicyFromUser,
   ensureHrAdminPolicy,
   newRunId,
   writeJoinedCompanyEvent,
@@ -126,7 +127,16 @@ describe('Population seed/import — observable effects (e2e)', () => {
         .set('authorization', `Bearer ${sessionToken}`)
         .expect(200);
 
-      const events = res.body as Array<Record<string, unknown>>;
+      // GET /users/:id/events wraps its list under `careertimeline` — the
+      // shape already established (and depended on by all 181 of
+      // access-control's own green E2E tests, e.g.
+      // test/access-control/matrix/*/*.e2e-spec.ts's
+      // `toHaveProperty('careertimeline')`) before this file was written.
+      // Unwrapping here rather than changing that shape, per this task's
+      // instruction not to invent a second, incompatible contract.
+      const events = (
+        res.body as { careertimeline: Array<Record<string, unknown>> }
+      ).careertimeline;
       const joinedEvents = events.filter((e) => e.type === 'joined_company');
       expect(joinedEvents).toHaveLength(1);
       expect(joinedEvents[0].source).toBe('system');
@@ -173,6 +183,13 @@ describe('Population seed/import — observable effects (e2e)', () => {
 
       const stored = await prisma.user.findUnique({ where: { workEmail } });
       expect(stored).toBeNull();
+
+      // This attachment to the shared, name-idempotent 'HR Admin' policy
+      // (ensureHrAdminPolicy) only existed to pass the session's permission
+      // gate for this Test's own POST /users probe — detach it so
+      // um-seed-03's holder-count assertion, later in this same file run,
+      // sees only its own fixture's attachment.
+      await detachPolicyFromUser(prisma, root.id, hrAdmin.id);
     });
   });
 

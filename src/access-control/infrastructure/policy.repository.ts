@@ -32,8 +32,30 @@ export class PolicyRepository implements PolicyReaderPort {
     return count > 0;
   }
 
-  async listPolicies(): Promise<{ id: string; name: string }[]> {
-    return this.prisma.policy.findMany({ select: { id: true, name: true } });
+  async listPolicies(): Promise<
+    {
+      id: string;
+      name: string;
+      holderCount: number;
+      holders: { id: string; workEmail: string }[];
+    }[]
+  > {
+    const policies = await this.prisma.policy.findMany({
+      include: {
+        userPolicies: {
+          include: { user: { select: { id: true, workEmail: true } } },
+        },
+      },
+    });
+    return policies.map((policy) => ({
+      id: policy.id,
+      name: policy.name,
+      holderCount: policy.userPolicies.length,
+      holders: policy.userPolicies.map((up) => ({
+        id: up.user.id,
+        workEmail: up.user.workEmail,
+      })),
+    }));
   }
 
   async revokeUserPolicy(userId: string, policyId: string): Promise<void> {
