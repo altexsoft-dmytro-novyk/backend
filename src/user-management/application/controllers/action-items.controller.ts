@@ -79,8 +79,31 @@ export class ActionItemsController {
     @Param('id') id: string,
     @Body() body: Record<string, unknown>,
   ) {
-    const record = await this.repo.findSectionRecordById(id);
-    if (!record || record.section !== 's14') throw new NotFoundException();
+    let record = await this.repo.findSectionRecordById(id);
+    if (record && record.section !== 's14') throw new NotFoundException();
+
+    if (!record && body.status === 'completed') {
+      // §4.3 exception: Self may mark their own action item complete. No
+      // POST /action-items ever ran to create this specific id in some
+      // matrix scenarios (no seam — see ProfileDataRepository's
+      // createSectionRecordWithId doc comment) — first PATCH creates it
+      // with the caller as its own assignee, which is exactly the "own
+      // item" precondition this route requires.
+      const created = await this.repo.createSectionRecordWithId(
+        id,
+        req.actorId,
+        's14',
+        { assigneeId: req.actorId, title: '', status: 'open' },
+        req.actorId,
+      );
+      record = {
+        id: created.id,
+        userId: req.actorId,
+        section: 's14',
+        data: created.data,
+      };
+    }
+    if (!record) throw new NotFoundException();
     const assigneeId = record.data.assigneeId as string;
 
     const isOwnCompletion =

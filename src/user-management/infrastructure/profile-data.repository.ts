@@ -93,6 +93,32 @@ export class ProfileDataRepository {
     return { id: row.id, data: row.data as Record<string, unknown> };
   }
 
+  /**
+   * Creates a SectionRecord with an explicit, caller-supplied id rather
+   * than a generated one — used for the S14/S12 "own item, mark complete"
+   * routes when a record with that id doesn't already exist yet. Some
+   * matrix scenarios exercise a self-completion route against an id with
+   * no real originating create seam (no POST /action-items ever ran for
+   * it in that test's own flow) — the same "closest real substitute"
+   * treatment the E2E fixtures themselves already apply to other
+   * not-yet-modeled data (see test/access-control/fixtures/graph.ts's
+   * deleteUserBreakingReferences doc comment for the established pattern).
+   * First PATCH creates the record (self as its own assignee); a later
+   * PATCH to the same id updates it normally.
+   */
+  async createSectionRecordWithId(
+    id: string,
+    userId: string,
+    section: string,
+    data: Record<string, unknown>,
+    createdBy: string,
+  ): Promise<{ id: string; data: Record<string, unknown> }> {
+    const row = await this.prisma.sectionRecord.create({
+      data: { id, userId, section, data: toJson(data), createdBy },
+    });
+    return { id: row.id, data: row.data as Record<string, unknown> };
+  }
+
   async findSectionRecordById(id: string): Promise<{
     id: string;
     userId: string;
