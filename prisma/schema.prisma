@@ -9,28 +9,5 @@ datasource db {
   provider = "postgresql"
 }
 
-model User {
-  id              String    @id @default(uuid(7))
-  firstName       String
-  lastName        String
-  photo           String?
-  position        String
-  country         String
-  city            String
-  workEmail       String    @unique
-  workPhone       String?
-  birthDay        Int?      // 1-31. No year captured/stored, for any audience (§3.2 S1: "birthday (day and month)")
-  birthMonth      Int?      // 1-12, paired with birthDay
-  companyJoinDate DateTime  @db.Date
-  isActive        Boolean   @default(true)
-  ttId            String?   @unique
-  // Interim jsonb bag ahead of the dynamic custom-fields system — don't build
-  // persistence assuming this shape survives (see domain-driven-design.md).
-  customFields    Json      @default("{}")
-  createdAt       DateTime  @default(now())
-  createdBy       String
-  creator         User      @relation("UserCreatedBy", fields: [createdBy], references: [id])
-  createdUsers    User[]    @relation("UserCreatedBy")
-
-  @@map("users")
-}
+// Reset 2026-08-30: prior user-management/access-control schema decisions removed,
+// pending redesign from docs/project-requirements.md.
