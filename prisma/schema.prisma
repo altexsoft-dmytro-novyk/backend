@@ -11,3 +11,317 @@ datasource db {
 
 // Reset 2026-08-30: prior user-management/access-control schema decisions removed,
 // pending redesign from docs/project-requirements.md.
+//
+// This schema implements the shapes fixed by
+// docs/architecture/database-schema.md and
+// _bmad-output/planning-artifacts/architecture/architecture-people-management-2026-08-30/ARCHITECTURE-SPINE.md
+// (AD-5 through AD-11, AD-15, AD-16, AD-18 through AD-21, AD-24, AD-26, AD-27).
+
+// ---------------------------------------------------------------------------
+// user-management
+// ---------------------------------------------------------------------------
+
+model User {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  // S1 identity-card fields
+  firstName       String   @map("first_name")
+  lastName        String   @map("last_name")
+  photo           String?
+  position        String
+  country         String
+  city            String
+  workEmail       String   @unique @map("work_email")
+  workPhone       String?  @map("work_phone")
+  birthDay        Int?     @map("birth_day")
+  birthMonth      Int?     @map("birth_month")
+  companyJoinDate DateTime @map("company_join_date") @db.Date
+  isActive        Boolean  @default(true) @map("is_active")
+  ttId            String?  @unique @map("tt_id")
+
+  departmentId String     @map("department_id") @db.Uuid
+  department   Department @relation("DepartmentMembers", fields: [departmentId], references: [id])
+
+  managedDepartments      Department[]             @relation("DepartmentManager")
+  relationshipsAsSubject  Relationship[]           @relation("RelationshipSubject")
+  relationshipsAsHolder   Relationship[]           @relation("RelationshipHolder")
+  relationshipJournalRows RelationshipJournal[]    @relation("RelationshipJournalSubject")
+  projectAssignments      ProjectAssignment[]
+  userEvents              UserEvents[]
+  employmentStatuses      EmploymentStatus[]
+  departures              Departure[]
+  magicLinkTokens         MagicLinkToken[]
+  userPolicies            UserPolicy[]
+  fullProfileAccessGrants FullProfileAccessGrant[]
+
+  @@index([departmentId])
+  @@map("users")
+}
+
+// AD-5: reports-to / people-partner edges. Reassignment is DELETE-then-POST
+// (or an atomic replace naming the expected current edge id) — every row in
+// this table is by definition the active edge, so a plain unique constraint
+// on (subjectUserId, type) already gives "at most one active edge."
+model Relationship {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  type RelationshipType
+
+  subjectUserId String @map("subject_user_id") @db.Uuid
+  subject       User   @relation("RelationshipSubject", fields: [subjectUserId], references: [id])
+
+  holderUserId String @map("holder_user_id") @db.Uuid
+  holder       User   @relation("RelationshipHolder", fields: [holderUserId], references: [id])
+
+  @@unique([subjectUserId, type])
+  @@index([holderUserId])
+  @@map("relationships")
+}
+
+enum RelationshipType {
+  direct
+  people_partner
+}
+
+// AD-6: department tree + membership. departmentId lives on User (exactly
+// one, never null); this table is the tree shape only.
+model Department {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  name           String
+  isHrDepartment Boolean @default(false) @map("is_hr_department")
+
+  parentId String?      @map("parent_id") @db.Uuid
+  parent   Department?  @relation("DepartmentHierarchy", fields: [parentId], references: [id])
+  children Department[] @relation("DepartmentHierarchy")
+
+  managerId String? @map("manager_id") @db.Uuid
+  manager   User?   @relation("DepartmentManager", fields: [managerId], references: [id])
+
+  members User[] @relation("DepartmentMembers")
+
+  @@index([parentId])
+  @@index([managerId])
+  @@map("departments")
+}
+
+// AD-7: single journal table for all four access-switch fields plus
+// full-profile-access grant/revoke. beforeValue/afterValue are always the
+// raw referenced id, the `null` sentinel, or (for full_profile_access) the
+// literal strings "granted"/"revoked" — never a denormalized snapshot.
+// `actor` records who performed the change as a raw id, mirroring
+// beforeValue/afterValue rather than a navigable relation (the ERD does not
+// draw an actor edge, only the subjectUserId edge).
+model RelationshipJournal {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  actor String @db.Uuid
+
+  subjectUserId String @map("subject_user_id") @db.Uuid
+  subject       User   @relation("RelationshipJournalSubject", fields: [subjectUserId], references: [id])
+
+  fieldType RelationshipJournalFieldType @map("field_type")
+
+  beforeValue String? @map("before_value")
+  afterValue  String? @map("after_value")
+
+  timestamp DateTime @default(now())
+
+  @@index([subjectUserId])
+  @@map("relationship_journal")
+}
+
+enum RelationshipJournalFieldType {
+  manager
+  people_partner
+  department
+  department_manager
+  full_profile_access
+}
+
+// AD-15: scheduling a departure is a distinct fact from applying it.
+model Departure {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id])
+
+  effectiveDate DateTime  @map("effective_date")
+  reason        String
+  recordedBy    String    @map("recorded_by") @db.Uuid
+  recordedAt    DateTime  @default(now()) @map("recorded_at")
+  appliedAt     DateTime? @map("applied_at")
+
+  @@index([userId])
+  // AD-16: the departure executor polls exactly this predicate
+  // (effectiveDate <= now() AND appliedAt IS NULL).
+  @@index([effectiveDate, appliedAt])
+  @@map("departures")
+}
+
+// AD-18: append-only, one open row (endDate null) per user at a time.
+model EmploymentStatus {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id])
+
+  status    EmploymentStatusValue
+  startDate DateTime              @map("start_date")
+  endDate   DateTime?             @map("end_date")
+
+  @@index([userId, endDate])
+  @@map("employment_statuses")
+}
+
+enum EmploymentStatusValue {
+  active
+  dismissed
+}
+
+// AD-19, AD-20, AD-26: career-timeline events, written synchronously in the
+// causing transaction. Append-only — a correction soft-deletes the wrong row
+// and appends a new one.
+model UserEvents {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id])
+
+  type      String
+  source    UserEventSource
+  eventDate DateTime        @map("event_date")
+  details   Json
+  createdBy String          @map("created_by") @db.Uuid
+  createdAt DateTime        @default(now()) @map("created_at")
+  deletedAt DateTime?       @map("deleted_at")
+
+  @@index([userId, deletedAt])
+  @@map("user_events")
+}
+
+enum UserEventSource {
+  system
+  manual
+}
+
+// AD-21: opaque, single-use, hashed-at-rest magic-link token.
+model MagicLinkToken {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id])
+
+  tokenHash      String                  @unique @map("token_hash")
+  expiresAt      DateTime                @map("expires_at")
+  consumedAt     DateTime?               @map("consumed_at")
+  dispatchStatus MagicLinkDispatchStatus @default(pending) @map("dispatch_status")
+
+  @@index([userId])
+  @@map("magic_link_tokens")
+}
+
+enum MagicLinkDispatchStatus {
+  pending
+  sent
+  failed
+}
+
+// Minimal shape for AD-24's indexed project-assignment lookups. Full Project
+// administration (ownership, timetracker sync, PM/DM roles) is deferred per
+// the spine — see ARCHITECTURE-SPINE.md Deferred section.
+model Project {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  name String
+
+  assignments ProjectAssignment[]
+
+  @@map("projects")
+}
+
+model ProjectAssignment {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  projectId String  @map("project_id") @db.Uuid
+  project   Project @relation(fields: [projectId], references: [id])
+
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([projectId])
+  @@index([userId])
+  @@map("project_assignments")
+}
+
+// ---------------------------------------------------------------------------
+// access-control
+// ---------------------------------------------------------------------------
+
+// AD-9: functional roles are data, admin-creatable via /roles.
+model Policy {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  name String @unique
+
+  policyPermissions PolicyPermission[]
+  userPolicies      UserPolicy[]
+
+  @@map("policies")
+}
+
+// AD-9: closed catalog, seeded only from the fixed §2.3 permission list —
+// no admin-facing create-permission path.
+model Permission {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  name String @unique
+
+  policyPermissions PolicyPermission[]
+
+  @@map("permissions")
+}
+
+model PolicyPermission {
+  policyId String @map("policy_id") @db.Uuid
+  policy   Policy @relation(fields: [policyId], references: [id])
+
+  permissionId String     @map("permission_id") @db.Uuid
+  permission   Permission @relation(fields: [permissionId], references: [id])
+
+  @@id([policyId, permissionId])
+  @@index([permissionId])
+  @@map("policy_permissions")
+}
+
+model UserPolicy {
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id])
+
+  policyId String @map("policy_id") @db.Uuid
+  policy   Policy @relation(fields: [policyId], references: [id])
+
+  @@id([userId, policyId])
+  @@index([policyId])
+  @@map("user_policies")
+}
+
+// AD-10, AD-27: full profile access is a separate grant, independent of
+// Policy/UserPolicy — resolves to an unconditional read override, never a
+// write override.
+model FullProfileAccessGrant {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id])
+
+  grantedBy String    @map("granted_by") @db.Uuid
+  grantedAt DateTime  @default(now()) @map("granted_at")
+  revokedAt DateTime? @map("revoked_at")
+
+  @@index([userId])
+  // AD-10: the last-active-holder check scans exactly this predicate
+  // (WHERE revokedAt IS NULL) under a row lock.
+  @@index([revokedAt])
+  @@map("full_profile_access_grants")
+}

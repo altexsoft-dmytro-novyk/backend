@@ -1,9 +1,11 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { AccessControlModule } from './access-control/access-control.module';
 import { envValidationSchema } from './config/env.validation';
 import { HealthModule } from './modules/health/health.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { StorageModule } from './storage/storage.module';
+import { UserManagementModule } from './user-management/user-management.module';
 
 @Module({
   imports: [
@@ -14,6 +16,8 @@ import { StorageModule } from './storage/storage.module';
     PrismaModule,
     StorageModule,
     HealthModule,
+    UserManagementModule,
+    AccessControlModule,
   ],
 })
 export class AppModule {}
