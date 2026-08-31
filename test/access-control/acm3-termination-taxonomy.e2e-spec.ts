@@ -27,6 +27,7 @@ describe('ACM-3 Stage 2 — chain-termination taxonomy (PostgreSQL)', () => {
   let moduleFixture: TestingModule;
   let facade: AccessControlFacade;
   let prisma: PrismaService;
+  let fixtureOwnerCreated = false;
 
   const runId = `acm3-term-${uuidv7()}`;
   const ids: Record<string, string> = {};
@@ -90,6 +91,7 @@ describe('ACM-3 Stage 2 — chain-termination taxonomy (PostgreSQL)', () => {
       select: { id: true },
     });
     ids.FixtureOwner = fixtureOwnerId;
+    fixtureOwnerCreated = true;
 
     // ACM3-II-09 — Hana -> Grzegorz -> Igor, Igor has no manager edge at all.
     await createUser('Hana');
@@ -119,20 +121,20 @@ describe('ACM-3 Stage 2 — chain-termination taxonomy (PostgreSQL)', () => {
   });
 
   afterAll(async () => {
-    if (prisma) {
-      const fixtureIds = Object.values(ids);
-      await prisma.relationship.deleteMany({
-        where: { userId: { in: fixtureIds } },
-      });
-      await prisma.user.deleteMany({
-        where: {
-          id: { in: fixtureIds.filter((id) => id !== ids.FixtureOwner) },
-        },
-      });
-      await prisma.user.delete({ where: { id: ids.FixtureOwner } });
-    }
-    if (moduleFixture) {
-      await moduleFixture.close();
+    try {
+      if (prisma && fixtureOwnerCreated) {
+        const fixtureIds = Object.values(ids);
+        await prisma.relationship.deleteMany({
+          where: { userId: { in: fixtureIds } },
+        });
+        await prisma.user.deleteMany({
+          where: { id: { in: fixtureIds } },
+        });
+      }
+    } finally {
+      if (moduleFixture) {
+        await moduleFixture.close();
+      }
     }
   });
 
@@ -146,9 +148,7 @@ describe('ACM-3 Stage 2 — chain-termination taxonomy (PostgreSQL)', () => {
     });
 
     it('grants Reporting for the direct-report degenerate case, walking past viewer proof to the absent edge', async () => {
-      const audiences = await facade.resolveAudiences(ids.Grzegorz, [
-        ids.Hana,
-      ]);
+      const audiences = await facade.resolveAudiences(ids.Grzegorz, [ids.Hana]);
 
       // One hop proves Grzegorz; the walk still has to continue above him
       // to Igor's absent edge before the grant is final.

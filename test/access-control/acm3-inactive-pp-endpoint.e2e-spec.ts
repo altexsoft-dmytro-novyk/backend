@@ -10,6 +10,7 @@ describe('ACM-3 Stage 2 — inactive direct-PP endpoint audience resolution (Pos
   let moduleFixture: TestingModule;
   let facade: AccessControlFacade;
   let prisma: PrismaService;
+  let fixtureOwnerCreated = false;
 
   const runId = `acm3-${uuidv7()}`;
   const ids: Record<string, string> = {};
@@ -62,6 +63,7 @@ describe('ACM-3 Stage 2 — inactive direct-PP endpoint audience resolution (Pos
       select: { id: true },
     });
     ids.FixtureOwner = fixtureOwnerId;
+    fixtureOwnerCreated = true;
 
     await createUser('Roman');
     await createUser('Pavlo', false);
@@ -91,25 +93,25 @@ describe('ACM-3 Stage 2 — inactive direct-PP endpoint audience resolution (Pos
   });
 
   afterAll(async () => {
-    if (prisma) {
-      const fixtureIds = Object.values(ids);
-      await prisma.relationship.deleteMany({
-        where: {
-          OR: [
-            { userId: { in: fixtureIds } },
-            { reportsToUserId: { in: fixtureIds } },
-          ],
-        },
-      });
-      await prisma.user.deleteMany({
-        where: {
-          id: { in: fixtureIds.filter((id) => id !== ids.FixtureOwner) },
-        },
-      });
-      await prisma.user.delete({ where: { id: ids.FixtureOwner } });
-    }
-    if (moduleFixture) {
-      await moduleFixture.close();
+    try {
+      if (prisma && fixtureOwnerCreated) {
+        const fixtureIds = Object.values(ids);
+        await prisma.relationship.deleteMany({
+          where: {
+            OR: [
+              { userId: { in: fixtureIds } },
+              { reportsToUserId: { in: fixtureIds } },
+            ],
+          },
+        });
+        await prisma.user.deleteMany({
+          where: { id: { in: fixtureIds } },
+        });
+      }
+    } finally {
+      if (moduleFixture) {
+        await moduleFixture.close();
+      }
     }
   });
 

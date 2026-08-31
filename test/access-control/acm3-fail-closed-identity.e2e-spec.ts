@@ -6,15 +6,17 @@ import type { Audience } from '../../src/access-control/domain/audience';
 import { AppModule } from '../../src/app.module';
 import { PrismaService } from '../../src/prisma/prisma.service';
 
+type RelationNameRow = { name: string | null };
+
 describe('ACM-3 Stage 2 — fail-closed identity resolution (PostgreSQL)', () => {
   let moduleFixture: TestingModule;
   let facade: AccessControlFacade;
   let prisma: PrismaService;
+  let fixtureOwnerCreated = false;
 
   const runId = `acm3-fci-${uuidv7()}`;
   const ids: Record<string, string> = {};
   const missingId = uuidv7();
-  const unreadableRelationshipsTable = `relationships_acm3_fci_${uuidv7().replaceAll('-', '')}`;
   const emailFor = (persona: string) => `${runId}-${persona}@company.example`;
 
   const createUser = async (persona: string): Promise<string> => {
@@ -42,23 +44,23 @@ describe('ACM-3 Stage 2 — fail-closed identity resolution (PostgreSQL)', () =>
     expect(actual).toEqual(expected);
   };
 
-  const withUnreadableRelationshipGraph = async <T>(
+  const withBlockedRelationshipGraph = async <T>(
     action: () => Promise<T>,
   ): Promise<T> => {
-    let renamed = false;
-    try {
-      await prisma.$executeRawUnsafe(
-        `ALTER TABLE "relationships" RENAME TO "${unreadableRelationshipsTable}"`,
-      );
-      renamed = true;
-      return await action();
-    } finally {
-      if (renamed) {
-        await prisma.$executeRawUnsafe(
-          `ALTER TABLE "${unreadableRelationshipsTable}" RENAME TO "relationships"`,
+    return prisma.$transaction(
+      async (tx) => {
+        // A second adapter transaction can still validate identities, set its
+        // own 2s statement timeout, and then fail on the real graph read. The
+        // lock is transaction-scoped, so PostgreSQL releases it on success,
+        // rejection, connection loss, or process termination; the canonical
+        // table name is never changed for another test process.
+        await tx.$executeRawUnsafe(
+          `LOCK TABLE "relationships" IN ACCESS EXCLUSIVE MODE`,
         );
-      }
-    }
+        return action();
+      },
+      { timeout: 10_000 },
+    );
   };
 
   beforeAll(async () => {
@@ -86,6 +88,7 @@ describe('ACM-3 Stage 2 — fail-closed identity resolution (PostgreSQL)', () =>
       select: { id: true },
     });
     ids.FixtureOwner = fixtureOwnerId;
+    fixtureOwnerCreated = true;
 
     await createUser('Xenia');
     await createUser('Yaroslav');
@@ -100,25 +103,26 @@ describe('ACM-3 Stage 2 — fail-closed identity resolution (PostgreSQL)', () =>
   });
 
   afterAll(async () => {
-    if (prisma) {
-      const fixtureIds = Object.values(ids);
-      await prisma.relationship.deleteMany({
-        where: { userId: { in: fixtureIds } },
-      });
-      await prisma.user.deleteMany({
-        where: {
-          id: { in: fixtureIds.filter((id) => id !== ids.FixtureOwner) },
-        },
-      });
-      await prisma.user.delete({ where: { id: ids.FixtureOwner } });
-    }
-    if (moduleFixture) {
-      await moduleFixture.close();
+    try {
+      if (prisma && fixtureOwnerCreated) {
+        const fixtureIds = Object.values(ids);
+        await prisma.relationship.deleteMany({
+          where: { userId: { in: fixtureIds } },
+        });
+        await prisma.user.deleteMany({
+          where: { id: { in: fixtureIds } },
+        });
+      }
+    } finally {
+      if (moduleFixture) {
+        await moduleFixture.close();
+      }
     }
   });
 
   describe('ACM3-II-13 · infrastructure failure propagates as an error', () => {
     it('rejects after a healthy reporting result when the graph table becomes unreadable', async () => {
+      let relationNameDuringFailure: string | null | undefined;
       const healthyAudiences = await facade.resolveAudiences(ids.Xenia, [
         ids.Yaroslav,
       ]);
@@ -131,15 +135,26 @@ describe('ACM-3 Stage 2 — fail-closed identity resolution (PostgreSQL)', () =>
       );
 
       await expect(
-        withUnreadableRelationshipGraph(() =>
-          facade.resolveAudiences(ids.Xenia, [ids.Yaroslav]),
-        ),
+        withBlockedRelationshipGraph(async () => {
+          const [relation] = await prisma.$queryRawUnsafe<RelationNameRow[]>(
+            `SELECT to_regclass('public.relationships')::text AS name`,
+          );
+          relationNameDuringFailure = relation?.name;
+
+          return facade.resolveAudiences(ids.Xenia, [ids.Yaroslav]);
+        }),
       ).rejects.toThrow();
+
+      // Failure injection must not rename or remove the shared relation:
+      // other test processes may use the same local database. Keep this
+      // outside the rejected action so an assertion error cannot masquerade
+      // as the infrastructure rejection the test is meant to observe.
+      expect(relationNameDuringFailure).toBe('relationships');
     });
 
     it('rejects the whole call instead of returning a partial map after a graph failure', async () => {
       await expect(
-        withUnreadableRelationshipGraph(() =>
+        withBlockedRelationshipGraph(() =>
           facade.resolveAudiences(ids.Xenia, [ids.Yaroslav, ids.Xenia]),
         ),
       ).rejects.toThrow();
