@@ -35,6 +35,7 @@ describe('ACM9 PostgreSQL baseline (explicit opt-in)', () => {
   let prisma: PrismaService | undefined;
   let facade: AccessControlFacade | undefined;
   let ids: string[] = [];
+  let viewer = '';
   let anchor = '';
   const plans: Array<{ id: string; source: string; plan: unknown }> = [];
   const completed: GateResult[] = [];
@@ -50,31 +51,31 @@ describe('ACM9 PostgreSQL baseline (explicit opt-in)', () => {
 
   const clean = async () => {
     if (!prisma || ids.length === 0) return;
-    await prisma.relationship.deleteMany({ where: { OR: [{ userId: { in: [...ids, anchor] } }, { reportsToUserId: { in: [...ids, anchor] } }] } });
-    await prisma.user.deleteMany({ where: { id: { in: [...ids, anchor] } } });
+    await prisma.relationship.deleteMany({ where: { OR: [{ userId: { in: [...ids, viewer, anchor] } }, { reportsToUserId: { in: [...ids, viewer, anchor] } }] } });
+    await prisma.user.deleteMany({ where: { id: { in: [...ids, viewer, anchor] } } });
   };
 
   const seed = async () => {
     if (!prisma) throw new Error('Prisma unavailable');
     ids = Array.from({ length: TARGET_COUNT }, () => uuidv7());
+    viewer = uuidv7();
     anchor = uuidv7();
-    const all = [anchor, ...ids];
+    const all = [anchor, viewer, ...ids];
     await prisma.user.create({ data: { id: anchor, firstName: 'ACM9', lastName: 'Anchor', position: 'Anchor', country: 'PL', city: 'Krakow', workEmail: `${runId}-anchor@example.invalid`, companyJoinDate: new Date('2020-01-01'), createdBy: anchor } });
-    await prisma.user.create({ data: { id: ids[0], firstName: 'ACM9', lastName: 'Viewer', position: 'Viewer', country: 'PL', city: 'Krakow', workEmail: `${runId}-viewer@example.invalid`, companyJoinDate: new Date('2020-01-01'), createdBy: anchor } });
-    await prisma.user.createMany({ data: ids.slice(1).map((id, index) => ({ id, firstName: 'ACM9', lastName: `Target${index + 1}`, position: 'Target', country: 'PL', city: 'Krakow', workEmail: `${runId}-${index + 1}@example.invalid`, companyJoinDate: new Date('2020-01-01'), createdBy: anchor })) });
-    if (all.length !== TARGET_COUNT + 1) throw new Error('Fixture must contain 500 active targets plus one isolation anchor');
+    await prisma.user.create({ data: { id: viewer, firstName: 'ACM9', lastName: 'Viewer', position: 'Viewer', country: 'PL', city: 'Krakow', workEmail: `${runId}-viewer@example.invalid`, companyJoinDate: new Date('2020-01-01'), createdBy: anchor } });
+    await prisma.user.createMany({ data: ids.map((id, index) => ({ id, firstName: 'ACM9', lastName: `Target${index + 1}`, position: 'Target', country: 'PL', city: 'Krakow', workEmail: `${runId}-${index + 1}@example.invalid`, companyJoinDate: new Date('2020-01-01'), createdBy: anchor })) });
+    if (ids.length !== TARGET_COUNT || all.length !== TARGET_COUNT + 2) throw new Error('Fixture must contain 500 active targets, one viewer, and one isolation anchor');
   };
 
   const configure = async (gate: Gate, depth: number) => {
     if (!prisma) throw new Error('Prisma unavailable');
     await prisma.relationship.deleteMany({ where: { userId: { in: ids } } });
-    const viewer = ids[0];
     const relations: Array<{ userId: string; type: 'direct' | 'people_partner'; reportsToUserId: string }> = [];
-    for (let index = 1; index < ids.length; index += 1) {
-      const reporting = gate === 'reporting' || (gate === 'mixed' && index <= 250);
-      const parent = depth === 5 ? (index <= 4 ? (reporting ? viewer : anchor) : ids[Math.floor((index - 1) / 4)]) : (index <= depth ? (index === 1 ? (reporting ? viewer : anchor) : ids[index - 1]) : (reporting ? viewer : anchor));
+    for (let index = 0; index < ids.length; index += 1) {
+      const reporting = gate === 'reporting' || (gate === 'mixed' && index < 250);
+      const parent = depth === 5 ? (index < 4 ? (reporting ? viewer : anchor) : ids[Math.floor((index - 1) / 4)]) : (index < depth ? (index === 0 ? (reporting ? viewer : anchor) : ids[index - 1]) : (reporting ? viewer : anchor));
       relations.push({ userId: ids[index], type: 'direct', reportsToUserId: parent });
-      const pp = gate === 'direct_pp' || (gate === 'mixed' && index > 125 && index <= 375);
+      const pp = gate === 'direct_pp' || (gate === 'mixed' && index >= 125 && index < 375);
       if (pp) relations.push({ userId: ids[index], type: 'people_partner', reportsToUserId: viewer });
     }
     await prisma.relationship.createMany({ data: relations });
@@ -92,7 +93,7 @@ describe('ACM9 PostgreSQL baseline (explicit opt-in)', () => {
   const call = async (): Promise<Measurement> => {
     if (!facade) throw new Error('AccessControlFacade unavailable');
     const start = performance.now();
-    await facade.resolveAudiences(ids[0], ids.slice(1));
+    await facade.resolveAudiences(viewer, ids);
     return { value_ms: performance.now() - start, error: null };
   };
 
