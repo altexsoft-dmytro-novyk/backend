@@ -27,6 +27,21 @@ import { InterimAccessControlAdapter } from '../../src/user-management/infrastru
  * EXPECTED RED (ACM8-KC-01): AppModule does not import AccessControlModule
  * yet, so AccessControlFacade is not resolvable from this container. That is
  * the exact production behavior ACM-8-production is gated on.
+ *
+ * Why this file imports ACCESS_CONTROL_PORT/AccessControlPort and the
+ * concrete InterimAccessControlAdapter from src/user-management/ (a
+ * cross-context import domain-driven-design.md otherwise forbids, tracked in
+ * _bmad-output/implementation-artifacts/access-control/deferred-work.md):
+ * ACM8-KC-02 exists specifically to prove that importing AccessControlModule
+ * has NOT silently rebound User Management's port — the assertion's whole
+ * value is checking identity against the real DI token and the real
+ * (still-interim) adapter class. That requires the literal symbols User
+ * Management defines; a locally re-declared token or a duck-typed stand-in
+ * would not be the same DI key and could pass without proving anything.
+ * Investigated 2026-08-31: there is no fix that removes this import without
+ * editing src/user-management/** (out of this build's scope) — see the
+ * deferred-work.md entry for the full reasoning, which also covers
+ * audience-resolution.e2e-spec.ts's identical import.
  */
 describe('ACM-8 Stage 2 — CAP-6 kernel composition (PostgreSQL)', () => {
   let app: INestApplication<App>;
