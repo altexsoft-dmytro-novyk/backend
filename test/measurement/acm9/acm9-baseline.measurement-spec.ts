@@ -7,6 +7,7 @@ import { performance } from 'node:perf_hooks';
 import { uuidv7 } from 'uuidv7';
 import { AccessControlModule } from '../../../src/access-control/access-control.module';
 import { AccessControlFacade } from '../../../src/access-control/application/access-control.facade';
+import { AppModule } from '../../../src/app.module';
 import { envValidationSchema } from '../../../src/config/env.validation';
 import { PrismaModule } from '../../../src/prisma/prisma.module';
 import { PrismaService } from '../../../src/prisma/prisma.service';
@@ -42,6 +43,7 @@ describe('ACM9 PostgreSQL baseline (explicit opt-in)', () => {
   let firstBreach: Record<string, unknown> | null = null;
   let fixtureHash = '';
   let environmentHash = '';
+  let comparable = true;
 
   const publishIncomplete = async (error: unknown, stopReason: string) => {
     const current = await readArtifact(artifact.path);
@@ -124,7 +126,7 @@ describe('ACM9 PostgreSQL baseline (explicit opt-in)', () => {
       const environmentManifest = { manifest_version: 'ACM9-MANIFEST-v1', postgres_configuration: null, node_version: process.version, platform: `${platform()} ${release()} ${arch()}`, cpu_count: cpus().length, available_parallelism: availableParallelism(), memory_total_bytes: totalmem(), memory_free_bytes: freemem(), topology: 'local PostgreSQL via DATABASE_URL', isolation_load_policy: 'single Jest worker; dedicated UUID fixture rows; no concurrent harness load', nullable_container_limits: null };
       environmentHash = manifestHash(environmentManifest);
       await finalizeArtifact(artifact, { fixture_manifest: fixtureManifest, fixture_manifest_hash: fixtureHash, environment_manifest: environmentManifest, environment_manifest_hash: environmentHash, source_revision: revision(backendRoot), workspace_revision: revision(workspaceRoot), runtime: { node: process.version, postgres: null }, topology: environmentManifest.topology, isolation_load_policy: environmentManifest.isolation_load_policy, warm_up_count: WARM_UPS, sample_count: SAMPLES, target_count: TARGET_COUNT });
-      moduleRef = await Test.createTestingModule({ imports: [ConfigModule.forRoot({ isGlobal: true, validationSchema: envValidationSchema }), PrismaModule, AccessControlModule] }).compile();
+      moduleRef = await Test.createTestingModule({ imports: role === 'final' ? [AppModule] : [ConfigModule.forRoot({ isGlobal: true, validationSchema: envValidationSchema }), PrismaModule, AccessControlModule] }).compile();
       await moduleRef.init();
       prisma = moduleRef.get(PrismaService);
       facade = moduleRef.get(AccessControlFacade);
@@ -138,8 +140,16 @@ describe('ACM9 PostgreSQL baseline (explicit opt-in)', () => {
         const baselinePath = process.env.ACM9_BASELINE_ARTIFACT;
         if (!baselinePath) throw new Error('ACM9 final requires ACM9_BASELINE_ARTIFACT');
         const baseline = await readArtifact(baselinePath);
-        if (!isCompatibleBaseline(baseline, { protocolVersion: 'ACM9-MVP-v1', fixtureHash, environmentHash })) throw new Error('ACM9 final requires a compatible PASS baseline');
-        await finalizeArtifact(artifact, { baseline_artifact_path: baselinePath, baseline_run_id: baseline.run_id });
+        // PRECONDITION (hard refuse before measurement): the baseline must exist,
+        // be PASS, and share this run's protocol version. A PASS baseline under a
+        // different protocol version is not comparable and cannot satisfy the gate.
+        if (baseline.status !== 'PASS' || baseline.protocol_version !== 'ACM9-MVP-v1') throw new Error('ACM9 final requires a PASS baseline under protocol version ACM9-MVP-v1');
+        // Fixture/environment hash agreement is NOT a precondition: per the
+        // PRECEDENCE rule, a mismatch here must not block measurement. It only
+        // downgrades comparability, so an absolute breach still finalizes FAIL
+        // and an unbreached mismatched run finalizes INCOMPLETE, never PASS.
+        comparable = isCompatibleBaseline(baseline, { protocolVersion: 'ACM9-MVP-v1', fixtureHash, environmentHash });
+        await finalizeArtifact(artifact, { baseline_artifact_path: baselinePath, baseline_run_id: baseline.run_id, comparability: comparable ? 'comparable' : 'mismatched' });
       }
       await seed();
       for (const gate of ['reporting', 'direct_pp', 'colleague', 'mixed'] as const) {
@@ -149,8 +159,8 @@ describe('ACM9 PostgreSQL baseline (explicit opt-in)', () => {
         }
         if (firstBreach !== null) break;
       }
-      const status = resolveStatus({ breach: firstBreach, comparable: true });
-      await finalizeArtifact(artifact, { status, stop_reason: firstBreach === null ? 'completed' : 'absolute_breach', completed_gates: completed, first_breach: firstBreach, plans, query_count: completed.reduce((total, result) => total + result.query_count, 0), fixture_manifest_hash: fixtureHash, environment_manifest_hash: environmentHash });
+      const status = resolveStatus({ breach: firstBreach, comparable });
+      await finalizeArtifact(artifact, { status, stop_reason: firstBreach === null ? 'completed' : 'absolute_breach', completed_gates: completed, first_breach: firstBreach, plans, query_count: completed.reduce((total, result) => total + result.query_count, 0), fixture_manifest_hash: fixtureHash, environment_manifest_hash: environmentHash, comparability: comparable ? 'comparable' : 'mismatched' });
       expect(firstBreach).toBeNull();
     } catch (error) {
       await publishIncomplete(error, firstBreach === null ? 'infrastructure_error' : 'absolute_breach');
