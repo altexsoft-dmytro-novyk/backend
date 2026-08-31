@@ -30,7 +30,7 @@
     "test:e2e": "NODE_OPTIONS=--experimental-vm-modules jest --config ./test/jest-e2e.json --runInBand",
     "measure:access-control:p6": "NODE_OPTIONS=--experimental-vm-modules jest --config ./test/jest-measurement.json --runInBand",
     "test:measurement:acm9": "NODE_OPTIONS=--experimental-vm-modules jest --config ./test/jest-acm9.json --runInBand test/measurement/acm9/manifest.spec.ts",
-    "measure:access-control:acm9": "tsx scripts/run-acm9-measurement.ts"
+    "measure:access-control:acm9": "node --import tsx scripts/run-acm9-measurement.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1118.0",
