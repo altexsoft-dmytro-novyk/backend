@@ -75,10 +75,21 @@ async function createFixtureUser(options: {
   return id;
 }
 
+async function findRunUsers() {
+  const users = await prisma.user.findMany({
+    select: { id: true, workEmail: true, isActive: true },
+  });
+
+  return users.filter(({ workEmail }) =>
+    workEmail.trim().toLowerCase().includes(runId),
+  );
+}
+
 describe('ACM-0 — deploy-time root User prerequisite (migrated PostgreSQL)', () => {
   afterEach(async () => {
+    const fixtureIds = (await findRunUsers()).map(({ id }) => id);
     await prisma.user.deleteMany({
-      where: { workEmail: { contains: runId } },
+      where: { id: { in: fixtureIds } },
     });
   });
 
@@ -94,11 +105,10 @@ describe('ACM-0 — deploy-time root User prerequisite (migrated PostgreSQL)', (
 
     expect(seed.exitCode).toBe(0);
 
-    const rows = await prisma.user.findMany({
-      where: { workEmail: { contains: runId } },
-      select: { workEmail: true, isActive: true },
-    });
-    expect(rows).toEqual([{ workEmail: canonicalEmail, isActive: true }]);
+    const rows = await findRunUsers();
+    expect(rows).toEqual([
+      expect.objectContaining({ workEmail: canonicalEmail, isActive: true }),
+    ]);
   });
 
   it('matches a canonical root across case and whitespace while ignoring unrelated active employees', async () => {
@@ -112,10 +122,7 @@ describe('ACM-0 — deploy-time root User prerequisite (migrated PostgreSQL)', (
       (await runSeed(`  ${canonicalEmail.toUpperCase()}  `)).exitCode,
     ).toBe(0);
 
-    const matchingRows = await prisma.user.findMany({
-      where: { workEmail: { contains: runId } },
-      select: { id: true, workEmail: true, isActive: true },
-    });
+    const matchingRows = await findRunUsers();
     const rootMatches = matchingRows.filter(
       ({ workEmail }) => workEmail.trim().toLowerCase() === canonicalEmail,
     );
@@ -136,9 +143,7 @@ describe('ACM-0 — deploy-time root User prerequisite (migrated PostgreSQL)', (
     expect(seed.exitCode).not.toBe(0);
     expect(seed.output).toMatch(/ROOT_WORK_EMAIL/i);
     expect(seed.output).toMatch(/blank|nonblank|required/i);
-    expect(
-      await prisma.user.count({ where: { workEmail: { contains: runId } } }),
-    ).toBe(0);
+    expect(await findRunUsers()).toHaveLength(0);
   });
 
   it('rejects an unmatched configured identity instead of adopting an existing HR Admin fallback', async () => {
@@ -182,14 +187,14 @@ describe('ACM-0 — deploy-time root User prerequisite (migrated PostgreSQL)', (
     expect(seed.output).toContain(canonicalEmail);
     expect(seed.output).toMatch(/2/);
 
-    const rows = await prisma.user.findMany({
-      where: { workEmail: { contains: runId } },
-      select: { workEmail: true, isActive: true },
-    });
+    const rows = await findRunUsers();
     expect(rows).toEqual(
       expect.arrayContaining([
-        { workEmail: canonicalEmail, isActive: true },
-        { workEmail: canonicalEmail.toUpperCase(), isActive: false },
+        expect.objectContaining({ workEmail: canonicalEmail, isActive: true }),
+        expect.objectContaining({
+          workEmail: canonicalEmail.toUpperCase(),
+          isActive: false,
+        }),
       ]),
     );
   });
@@ -225,10 +230,7 @@ describe('ACM-0 — deploy-time root User prerequisite (migrated PostgreSQL)', (
     expect(first.exitCode).toBe(0);
     expect(second.exitCode).toBe(0);
 
-    const rows = await prisma.user.findMany({
-      where: { workEmail: { contains: runId } },
-      select: { id: true, workEmail: true, isActive: true },
-    });
+    const rows = await findRunUsers();
     expect(rows).toEqual([
       expect.objectContaining({
         workEmail: canonicalEmail,
