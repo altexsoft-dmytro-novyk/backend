@@ -117,6 +117,9 @@ describe('ACM-4R Stage 2 — CAP-2 multi-audience resolution (PostgreSQL)', () =
     await createUser('Taylor6');
     await createUser('Reese6');
     await createUser('Carmen6');
+    // Noah6 deliberately gets no relationship rows at all — that absence is
+    // what proves the Colleague floor inside the MA-06 combined fixture, not
+    // an oversight.
     await createUser('Noah6');
 
     await prisma.relationship.createMany({
@@ -244,6 +247,7 @@ describe('ACM-4R Stage 2 — CAP-2 multi-audience resolution (PostgreSQL)', () =
     }
   });
 
+  // docs/test-cases/access-control-kernel/multi-audience/acm4r-ma-01-reporting-and-pp-retained.md
   describe('ACM4R-MA-01 · Reporting and direct PP are retained for one target', () => {
     it('retains both Reporting and PP without either suppressing the other', async () => {
       const audiences = await facade.resolveAudiences(ids.Marta, [ids.Alice]);
@@ -253,6 +257,7 @@ describe('ACM-4R Stage 2 — CAP-2 multi-audience resolution (PostgreSQL)', () =
     });
   });
 
+  // docs/test-cases/access-control-kernel/multi-audience/acm4r-ma-02-self-exclusive-after-confirmation.md
   describe('ACM4R-MA-02 · Confirmed active Self is exclusive', () => {
     it('returns exactly Set{self} with no manager or Colleague audience merged in', async () => {
       const audiences = await facade.resolveAudiences(ids.SelfViewer, [
@@ -264,6 +269,7 @@ describe('ACM-4R Stage 2 — CAP-2 multi-audience resolution (PostgreSQL)', () =
     });
   });
 
+  // docs/test-cases/access-control-kernel/multi-audience/acm4r-ma-03-colleague-is-floor.md
   describe('ACM4R-MA-03 · Colleague is present only when no stronger audience applies', () => {
     it('Reporting suppresses the Colleague fallback', async () => {
       const audiences = await facade.resolveAudiences(ids.Zara, [ids.Daria]);
@@ -286,6 +292,7 @@ describe('ACM-4R Stage 2 — CAP-2 multi-audience resolution (PostgreSQL)', () =
     });
   });
 
+  // docs/test-cases/access-control-kernel/multi-audience/acm4r-ma-04-duplicate-target-does-not-duplicate-audiences.md
   describe('ACM4R-MA-04 · Repeated target input preserves one de-duplicated mixed result', () => {
     it('collapses a duplicate target id to one map entry with cardinality 2', async () => {
       const audiences = await facade.resolveAudiences(ids.Marta, [
@@ -299,6 +306,7 @@ describe('ACM-4R Stage 2 — CAP-2 multi-audience resolution (PostgreSQL)', () =
     });
   });
 
+  // docs/test-cases/access-control-kernel/multi-audience/acm4r-ma-05-fr-permission-excluded-from-audiences.md
   describe('ACM4R-MA-05 · A functional permission never enters audience resolution', () => {
     it('resolves the Colleague floor and surfaces no permission/policy value', async () => {
       const audiences = await facade.resolveAudiences(ids.FrViewer, [
@@ -309,6 +317,7 @@ describe('ACM-4R Stage 2 — CAP-2 multi-audience resolution (PostgreSQL)', () =
     });
   });
 
+  // docs/test-cases/access-control-kernel/multi-audience/acm4r-ma-06-mixed-postgresql-fixture.md
   describe('ACM4R-MA-06 · One PostgreSQL fixture covers every CAP-2 audience class', () => {
     it('preserves every applicable audience across one bulk facade call', async () => {
       const audiences = await facade.resolveAudiences(ids.Mara6, [
