@@ -9,14 +9,16 @@ import { PrismaFunctionalRoleRepository } from './infrastructure/prisma-function
 import { PrismaIdentityAdapter } from './infrastructure/prisma-identity.adapter';
 import { PrismaRelationshipGraphAdapter } from './infrastructure/prisma-relationship-graph.adapter';
 
-// Not imported by AppModule yet, and deliberately so: adopting the facade means
-// rebinding ACCESS_CONTROL_PORT in user-management.module.ts, which is User
-// Management's own story (AD-2). Until then this module is consumed by its
-// tests only, and GET /users/:id keeps the interim adapter in production.
+// Imported by AppModule (ACM-8/CAP-6): AccessControlFacade is resolvable from
+// the real application container. That is a DI-visibility change only, not
+// authorization adoption — user-management.module.ts still binds
+// ACCESS_CONTROL_PORT to InterimAccessControlAdapter, and GET /users/:id
+// keeps the interim adapter in production. Rebinding ACCESS_CONTROL_PORT away
+// from it remains User Management's own, separately-gated story (AD-2); it is
+// not a consequence of this module being importable or imported.
 // Global because AD-9 makes this facade the authorization entry point in every
 // context: a consumer must be able to inject it without re-declaring the wiring
-// (PrismaModule is global here for the same reason). It becomes visible only
-// once something imports it — AppModule still does not.
+// (PrismaModule is global here for the same reason).
 @Global()
 @Module({
   providers: [
