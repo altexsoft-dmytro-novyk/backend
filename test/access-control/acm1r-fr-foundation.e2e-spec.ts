@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { uuidv7 } from 'uuidv7';
@@ -36,6 +36,13 @@ import { PrismaClient } from '../../src/generated/prisma/client';
 // defined. Every failure-path test asserts its SPECIFIC diagnostic rather than
 // a bare nonzero exit, so a missing npm script cannot make a red test pass for
 // the wrong reason.
+
+// Every test in this suite shells out to the real deploy-time entrypoints, and
+// FB-18/FB-19/FB-27 additionally wait on PostgreSQL lock state. Jest's 5s
+// default would abort them before their own logic ran, producing red for a
+// harness reason rather than for the absent subject — the failure mode the
+// entrypoint guard above exists to rule out.
+jest.setTimeout(120_000);
 
 const execFileAsync = promisify(execFile);
 const backendRoot = `${__dirname}/../..`;
@@ -140,6 +147,65 @@ async function resetBootstrapState(): Promise<void> {
   ]) {
     await tolerantDelete(table);
   }
+}
+
+/**
+ * Wait until some OTHER backend holds a write lock on `table`. A RowExclusiveLock
+ * appears only once that session has actually issued an INSERT/UPDATE against
+ * the relation, so this observes "the bootstrap has written, inside its open
+ * transaction" without any cooperation from the production code. The rows
+ * themselves are invisible to us until it commits — which is precisely the
+ * property ACM1R-FB-27 exists to prove.
+ */
+async function waitForForeignWriteLock(
+  table: string,
+  timeoutMs = 20_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const [row] = await sql<{ n: bigint }>(
+      `SELECT count(*)::bigint AS n
+       FROM pg_locks l
+       JOIN pg_class c ON c.oid = l.relation
+       WHERE c.relname = $1
+         AND l.mode = 'RowExclusiveLock'
+         AND l.granted
+         AND l.pid <> pg_backend_pid()`,
+      table,
+    );
+    if (Number(row.n) > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(
+    `timed out waiting for a foreign write lock on "${table}" — the bootstrap ` +
+      `never wrote inside a transaction, so this test cannot prove rollback`,
+  );
+}
+
+/** Start the real entrypoint detached, so the test can kill it mid-transaction. */
+function startBootstrap(rootWorkEmail: string) {
+  const child = spawn('npm', ['run', 'db:bootstrap:access-control'], {
+    cwd: backendRoot,
+    env: { ...process.env, ROOT_WORK_EMAIL: rootWorkEmail },
+    detached: true,
+  });
+  let output = '';
+  child.stdout?.on('data', (chunk) => (output += String(chunk)));
+  child.stderr?.on('data', (chunk) => (output += String(chunk)));
+  const exited = new Promise<number>((resolve) =>
+    child.on('exit', (code, signal) => resolve(signal ? -1 : (code ?? 1))),
+  );
+  return {
+    kill: () => {
+      try {
+        process.kill(-child.pid!, 'SIGKILL');
+      } catch {
+        child.kill('SIGKILL');
+      }
+    },
+    exited,
+    outputSoFar: () => output,
+  };
 }
 
 async function createFixtureUser(options: {
@@ -794,6 +860,10 @@ describe('ACM1R-FB-18 — the common advisory lock covers first creation', () =>
         await tx.$executeRawUnsafe(
           `SELECT pg_advisory_xact_lock(hashtextextended('access-control:bootstrap:root-hr-admin', 0))`,
         );
+        // Operational configuration, not a test hook: a deploy-time step
+        // must bound how long it waits for the bootstrap lock, and different
+        // environments need different bounds. Production reads this with a
+        // sane default; the test only shortens it.
         const run = await runBootstrap(root.email, {
           ACCESS_CONTROL_BOOTSTRAP_LOCK_TIMEOUT_MS: '2000',
         });
@@ -826,14 +896,47 @@ describe('ACM1R-FB-19 — revalidation before writes and again before commit', (
     // eligibility read and commit is a window in which the root identity can
     // change underneath a transaction that is about to grant it three
     // permissions.
+    //
+    // Deterministic without any production test hook. We take the root row
+    // lock FIRST, so the bootstrap's own `FOR UPDATE` blocks behind us; we then
+    // deactivate and commit. The bootstrap acquires the lock, re-reads, and must
+    // observe an ineligible root. No timing race: the ordering is enforced by
+    // PostgreSQL row locking, not by sleeps.
     const root = await seedRoot();
 
-    const run = await runBootstrap(root.email, {
-      ACCESS_CONTROL_BOOTSTRAP_TEST_HOOK: 'deactivate-root-before-commit',
+    const holder = new PrismaClient({
+      adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
     });
+    let run: CommandRun;
+    try {
+      let releaseHolder: () => void = () => {};
+      const holderDone = new Promise<void>((resolve) => (releaseHolder = resolve));
+
+      const holding = holder.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          `SELECT id FROM "users" WHERE id = $1 FOR UPDATE`,
+          root.id,
+        );
+        await holderDone;
+        await tx.$executeRawUnsafe(
+          `UPDATE "users" SET "isActive" = false WHERE id = $1`,
+          root.id,
+        );
+      });
+
+      const bootstrap = runBootstrap(root.email);
+      // Give the bootstrap time to reach its blocking lock acquisition, then
+      // let the holder deactivate and commit.
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      releaseHolder();
+      await holding;
+      run = await bootstrap;
+    } finally {
+      await holder.$disconnect();
+    }
 
     expect(run.exitCode).not.toBe(0);
-    expect(run.output).toMatch(/root identity|eligibility|no longer/i);
+    expect(run.output).toMatch(/root identity|eligibility|inactive|no longer/i);
 
     expect(await countOf('Permissions')).toBe(0);
     expect(await countOf('Policies')).toBe(0);
@@ -1251,11 +1354,13 @@ describe('ACM1R-FB-26 — drift is dispositioned per field', () => {
 });
 
 describe('ACM1R-FB-27 — a failure after writes leaves no partial state', () => {
-  it('rolls back everything written before an injected pre-commit failure', async () => {
+  it('rolls back everything written when the process dies mid-transaction', async () => {
     // Break caught: every other "nothing written" assertion in this suite
     // detects its failure BEFORE the first write, so none of them can tell one
-    // real transaction from a sequence of autocommitted statements. Placing the
-    // failure after writes is the only arrangement that distinguishes them.
+    // real transaction from a sequence of autocommitted statements. Killing the
+    // process after an OBSERVED write is the only arrangement that
+    // distinguishes them — and it needs no test hook in production code, which
+    // makes it stronger evidence than a cooperative failure would be.
     //
     // A partial bootstrap is specifically dangerous: three permissions and an
     // FR policy with no grants and no attachment is a state in which isAllowed
@@ -1263,11 +1368,17 @@ describe('ACM1R-FB-27 — a failure after writes leaves no partial state', () =>
     // to have been provisioned.
     const root = await seedRoot();
 
-    const run = await runBootstrap(root.email, {
-      ACCESS_CONTROL_BOOTSTRAP_TEST_HOOK: 'fail-after-permissions-before-commit',
-    });
+    const bootstrap = startBootstrap(root.email);
+    try {
+      // Proof the write happened: a RowExclusiveLock on "Permissions" is held
+      // by another backend. The inserted rows are still invisible to us,
+      // because they are inside its uncommitted transaction.
+      await waitForForeignWriteLock('Permissions');
+    } finally {
+      bootstrap.kill();
+    }
+    await bootstrap.exited;
 
-    expect(run.exitCode).not.toBe(0);
     expect(await countOf('Permissions')).toBe(0);
     expect(await countOf('Policies')).toBe(0);
     expect(await countOf('PolicyPermissions')).toBe(0);
