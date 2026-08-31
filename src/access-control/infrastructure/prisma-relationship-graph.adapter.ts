@@ -55,35 +55,68 @@ export class PrismaRelationshipGraphAdapter implements RelationshipGraphPort {
         // a literal constant, never interpolated input.
         await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '2s'`);
 
-        // Walk upward from each target through its `direct` chain and test
-        // whether the viewer appears among its ancestors. Cost bounds to chain
-        // depth × target count, not the viewer's subtree size. The recursive
-        // term must be UNION, not UNION ALL: deduplication is what terminates
-        // the walk when the graph contains a cycle the schema does not reject.
+        // Walk upward from each target through its `direct` chain. Reaching the
+        // viewer is NOT the decision: it proves the viewer sits on that
+        // target's chain, but the proof is provisional until the chain
+        // terminates cleanly. Reporting is granted only when the whole walked
+        // chain for that target ends without repeating a node — a repeat
+        // anywhere, before or after the viewer is reached, denies Reporting for
+        // that target alone, so a viewer inside a cycle is denied rather than
+        // proven by the cycle.
         //
-        // The join on `users` is the fail-closed filter: a deactivated person
-        // is neither a reachable node nor a bridge, so the walk stops there
-        // instead of handing ancestors above the dead node reach they never
-        // had (AD-11/AD-12).
+        // That is why the recursive term carries an explicit `path` and is
+        // UNION ALL rather than UNION. Set deduplication would still halt the
+        // recursion, but halting is not denying: it ends the walk while leaving
+        // the viewer's row in the result, which is exactly the reachability
+        // answer this rule replaces. Only a per-row path can say WHICH target's
+        // walk closed on itself. `path` also makes visited state path-local by
+        // construction — two targets sharing an ancestor each carry their own
+        // path, so a shared ancestor is never mistaken for a repeat.
+        //
+        // Termination is the absence of a further USABLE manager edge. Both
+        // termination cases are the same join: an absent edge produces no row,
+        // and an edge whose endpoint is inactive is filtered out by the join on
+        // `users e`, so it produces no row either — unusable, and therefore
+        // treated as absent (AD-11/AD-12). Nothing above a dead node is
+        // reachable, while a viewer already proven below it keeps Reporting,
+        // because the chain has then ended without a repeat.
+        //
+        // Bounded by construction: `relationships_one_direct_per_user` gives
+        // each person at most one `direct` row, so each target walks a single
+        // path and `NOT c.repeated` stops it at the first closure. Cost stays
+        // chain depth × target count.
         const reporting = await tx.$queryRaw<IdRow[]>`
           WITH RECURSIVE chain AS (
-            SELECT r."userId" AS target_id, r."reportsToUserId" AS ancestor_id
+            SELECT r."userId"                                   AS target_id,
+                   r."reportsToUserId"                          AS node_id,
+                   ARRAY[r."userId", r."reportsToUserId"]       AS path,
+                   FALSE                                        AS repeated
               FROM "relationships" r
-              JOIN "users" u ON u."id" = r."userId" AND u."isActive" = TRUE
+              JOIN "users" t ON t."id" = r."userId" AND t."isActive" = TRUE
+              JOIN "users" e ON e."id" = r."reportsToUserId" AND e."isActive" = TRUE
              WHERE r."type" = 'direct'::"RelationshipType"
                AND r."userId" IN (${ids})
-            UNION
-            SELECT c.target_id, r."reportsToUserId"
+            UNION ALL
+            SELECT c.target_id,
+                   r."reportsToUserId",
+                   c.path || r."reportsToUserId",
+                   r."reportsToUserId" = ANY(c.path)
               FROM chain c
               JOIN "relationships" r
-                ON r."userId" = c.ancestor_id
+                ON r."userId" = c.node_id
                AND r."type" = 'direct'::"RelationshipType"
-              JOIN "users" u ON u."id" = c.ancestor_id AND u."isActive" = TRUE
-             WHERE c.ancestor_id IS NOT NULL
+              JOIN "users" e ON e."id" = r."reportsToUserId" AND e."isActive" = TRUE
+             WHERE NOT c.repeated
           )
-          SELECT DISTINCT target_id AS id
-            FROM chain
-           WHERE ancestor_id = ${viewerId}
+          SELECT DISTINCT c.target_id AS id
+            FROM chain c
+           WHERE c.node_id = ${viewerId}
+             AND NOT EXISTS (
+                   SELECT 1
+                     FROM chain b
+                    WHERE b.target_id = c.target_id
+                      AND b.repeated
+                 )
         `;
 
         // The PP branch resolves the assigned endpoint and stops. Walking on to
