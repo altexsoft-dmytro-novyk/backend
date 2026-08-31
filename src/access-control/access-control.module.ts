@@ -1,7 +1,9 @@
 import { Global, Module } from '@nestjs/common';
 import { AccessControlFacade } from './application/access-control.facade';
+import { IDENTITY_PORT } from './domain/interfaces/identity.port';
 import { RELATIONSHIP_GRAPH_PORT } from './domain/interfaces/relationship-graph.port';
 import { AudienceResolverService } from './domain/services/audience-resolver.service';
+import { PrismaIdentityAdapter } from './infrastructure/prisma-identity.adapter';
 import { PrismaRelationshipGraphAdapter } from './infrastructure/prisma-relationship-graph.adapter';
 
 // Not imported by AppModule yet, and deliberately so: adopting the facade means
@@ -20,6 +22,10 @@ import { PrismaRelationshipGraphAdapter } from './infrastructure/prisma-relation
     {
       provide: RELATIONSHIP_GRAPH_PORT,
       useClass: PrismaRelationshipGraphAdapter,
+    },
+    {
+      provide: IDENTITY_PORT,
+      useClass: PrismaIdentityAdapter,
     },
   ],
   exports: [AccessControlFacade],
