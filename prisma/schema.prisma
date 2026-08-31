@@ -32,5 +32,145 @@ model User {
   creator         User      @relation("UserCreatedBy", fields: [createdBy], references: [id])
   createdUsers    User[]    @relation("UserCreatedBy")
 
+  // Org facts live in `Relationship`, never as columns here (AD-11): a manager
+  // pointer on the profile row is the stored-access mistake the audience walk exists to avoid.
+  relationships     Relationship[] @relation("RelationshipSubject")
+  incomingRelations Relationship[] @relation("RelationshipReportsTo")
+
+  // Access Control attachments. Back-relations only: Prisma requires them for
+  // the foreign keys below, and no User Management behavior reads them.
+  userPolicies      UserPolicy[]
+  bootstrapRootOf   AccessControlBootstrap?
+
   @@map("users")
+}
+
+
+enum RelationshipType {
+  direct
+  project
+  people_partner
+}
+
+// The org-fact edge table the audience walk recurses over (AD-11). One typed
+// row per fact; `reportsToUserId` carries the endpoint for both `direct` and
+// `people_partner`, `projectId` for `project`. The shape rule, the
+// one-manager/one-PP cardinality and the no-self-report guard are CHECK and
+// partial-unique constraints in the migration — Prisma cannot express them.
+model Relationship {
+  id              String           @id @default(uuid(7))
+  userId          String
+  type            RelationshipType
+  reportsToUserId String?
+  projectId       String?
+
+  user      User     @relation("RelationshipSubject", fields: [userId], references: [id], onDelete: Cascade)
+  reportsTo User?    @relation("RelationshipReportsTo", fields: [reportsToUserId], references: [id], onDelete: Restrict)
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  @@index([userId, type])
+  // The resolver's hot path filters type + endpoint, in that column order.
+  @@index([reportsToUserId, type])
+  @@index([projectId])
+  @@map("relationships")
+}
+
+// Present so `Relationship.projectId` has a real target. Project-line audiences
+// stay fail-closed until the timetracker assignment/freshness contract is
+// approved, so nothing reads this table yet.
+model Project {
+  id            String         @id @default(uuid(7))
+  name          String
+  createdAt     DateTime       @default(now())
+  relationships Relationship[]
+
+  @@map("projects")
+}
+
+
+// ---------------------------------------------------------------------------
+// Access Control functional-role kernel (AD-4 / FR-AMD-1, SPEC CAP-3).
+//
+// The type separation this model exists to guarantee is enforced in reviewed
+// custom migration SQL, not here: Prisma cannot express the FR/AR row-shape
+// CHECK, the PARTIAL unique FR role key, the `Policies(id, type)` support key,
+// or the composite foreign key that makes an AR-policy grant impossible. Read
+// the migration alongside these models — the models alone understate the
+// contract.
+// ---------------------------------------------------------------------------
+
+model Policy {
+  id         String  @id @default(uuid(7))
+  operator   String  @default("==")
+  // Polymorphic by design — no database FK, because `targetType` selects the
+  // table (AD-10). Both are NULL on FR rows.
+  targetType String?
+  targetId   String?
+  // The FR role key. Unique only among FR rows: an AR policy may legally carry
+  // the same `targetRole` and is a different object.
+  targetRole String?
+  type       String
+  managedBy  String
+
+  userPolicies UserPolicy[]
+  bootstrap    AccessControlBootstrap?
+
+  @@map("Policies")
+}
+
+model Permission {
+  id          String @id @default(uuid(7))
+  // Immutable lowercase `context:action`. Append-only: no writer updates a key
+  // in place.
+  key         String @unique
+  description String
+
+  grants PolicyPermission[]
+
+  @@map("Permissions")
+}
+
+model PolicyPermission {
+  policyId     String
+  // Stored discriminator. Fixed to 'FR' by CHECK and joined to
+  // `Policies(id, type)` by a composite foreign key in the migration, which is
+  // what makes an AR-policy grant impossible at the database boundary. There is
+  // deliberately NO Prisma relation on `policyId`: a Prisma relation would emit
+  // a simple FK to `Policies(id)`, which cannot constrain the type at all.
+  policyType   String @default("FR")
+  permissionId String
+
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+
+  @@id([policyId, permissionId])
+  // Permission-first: ACM-2 enters from a permission key, so that column leads.
+  // The primary key already covers (policyId, permissionId).
+  @@index([permissionId, policyId])
+  @@map("PolicyPermissions")
+}
+
+model UserPolicy {
+  userId   String
+  policyId String
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  policy Policy @relation(fields: [policyId], references: [id], onDelete: Restrict)
+
+  @@id([userId, policyId])
+  @@map("UserPolicies")
+}
+
+// Durable bootstrap provenance. Its ABSENCE is meaningful — it is what permits
+// adoption on a first run — so the singleton is enforced by constraints rather
+// than convention.
+model AccessControlBootstrap {
+  key                 String @id
+  normalizedRootEmail String @unique
+  rootUserId          String @unique
+  policyId            String @unique
+
+  user   User   @relation(fields: [rootUserId], references: [id], onDelete: Restrict)
+  policy Policy @relation(fields: [policyId], references: [id], onDelete: Restrict)
+
+  @@map("AccessControlBootstrap")
 }
