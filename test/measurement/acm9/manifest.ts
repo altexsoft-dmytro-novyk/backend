@@ -40,7 +40,8 @@ export const reserveArtifact = async (directory: string, role: RunRole, runId: s
   const path = join(directory, `acm9-${role}-${runId}.json`);
   const handle = await open(path, 'wx');
   try {
-    await handle.writeFile(`${JSON.stringify({ run_id: runId, role, protocol_version: ACM9_PROTOCOL, status: 'INCOMPLETE', stop_reason: 'pending' })}\n`, 'utf8');
+    const timestamp = new Date().toISOString();
+    await handle.writeFile(`${JSON.stringify({ run_id: runId, role, protocol_version: ACM9_PROTOCOL, manifest_version: ACM9_MANIFEST, status: 'INCOMPLETE', created_at: timestamp, updated_at: timestamp, stop_reason: 'pending' })}\n`, 'utf8');
   } finally { await handle.close(); }
   return { path, role, runId };
 };
@@ -48,7 +49,7 @@ export const reserveArtifact = async (directory: string, role: RunRole, runId: s
 export const readArtifact = async (path: string): Promise<Record<string, unknown>> => JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
 export const finalizeArtifact = async (reserved: ReservedArtifact, patch: Record<string, unknown>): Promise<Record<string, unknown>> => {
   const current = await readArtifact(reserved.path);
-  const final = { ...current, ...patch };
+  const final = { ...current, ...patch, updated_at: new Date().toISOString() };
   const temporary = `${reserved.path}.finalizing`;
   await writeFile(temporary, `${JSON.stringify(final)}\n`, 'utf8');
   await rename(temporary, reserved.path);

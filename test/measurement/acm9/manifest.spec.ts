@@ -31,6 +31,11 @@ describe('ACM9 artifact protocol', () => {
     await expect(reserveArtifact(directory, 'baseline', 'run-a')).rejects.toMatchObject({ code: 'EEXIST' });
     const initial = JSON.parse(await readFile(reserved.path, 'utf8'));
     expect(initial.status).toBe('INCOMPLETE');
+    expect(initial.protocol_version).toBe('ACM9-MVP-v1');
+    expect(initial.manifest_version).toBe('ACM9-MANIFEST-v1');
+    expect(initial.created_at).toEqual(expect.any(String));
+    expect(initial.updated_at).toEqual(expect.any(String));
+    expect(initial.stop_reason).toBe('pending');
     const finalized = await finalizeArtifact(reserved, { status: 'PASS', stop_reason: 'completed' });
     expect(finalized.status).toBe('PASS');
   });

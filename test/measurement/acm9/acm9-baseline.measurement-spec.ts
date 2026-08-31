@@ -10,7 +10,7 @@ import { AccessControlFacade } from '../../../src/access-control/application/acc
 import { envValidationSchema } from '../../../src/config/env.validation';
 import { PrismaModule } from '../../../src/prisma/prisma.module';
 import { PrismaService } from '../../../src/prisma/prisma.service';
-import { ACM9_PROTOCOL, finalizeArtifact, manifestHash, nearestRank, readArtifact, reserveArtifact, resolveStatus, type ReservedArtifact } from './manifest';
+import { finalizeArtifact, isCompatibleBaseline, manifestHash, nearestRank, readArtifact, reserveArtifact, resolveStatus, type ReservedArtifact } from './manifest';
 
 const TARGET_COUNT = 500;
 const WARM_UPS = 5;
@@ -117,14 +117,13 @@ describe('ACM9 PostgreSQL baseline (explicit opt-in)', () => {
   it('runs only the requested baseline protocol and preserves an auditable result', async () => {
     artifact = await reserveArtifact(ARTIFACT_DIRECTORY, role, runId);
     try {
-      if (role !== 'baseline') throw new Error('ACM9 final role is not authorized by this baseline dispatch');
       const backendRoot = resolve(__dirname, '../../..');
       const workspaceRoot = resolve(backendRoot, '../..');
       const fixtureManifest = { manifest_version: 'ACM9-MANIFEST-v1', target_count: TARGET_COUNT, active_targets: TARGET_COUNT, gates: ['reporting', 'direct_pp', 'colleague', 'mixed'], balanced_depth: 5, acyclic_depths: [25, 50, 100, 200, 300, 400, 499], warm_ups: WARM_UPS, samples: SAMPLES, nullable_baseline_run_id: null };
       fixtureHash = manifestHash(fixtureManifest);
       const environmentManifest = { manifest_version: 'ACM9-MANIFEST-v1', postgres_configuration: null, node_version: process.version, platform: `${platform()} ${release()} ${arch()}`, cpu_count: cpus().length, available_parallelism: availableParallelism(), memory_total_bytes: totalmem(), memory_free_bytes: freemem(), topology: 'local PostgreSQL via DATABASE_URL', isolation_load_policy: 'single Jest worker; dedicated UUID fixture rows; no concurrent harness load', nullable_container_limits: null };
       environmentHash = manifestHash(environmentManifest);
-      await finalizeArtifact(artifact, { fixture_manifest: fixtureManifest, fixture_manifest_hash: fixtureHash, environment_manifest: environmentManifest, environment_manifest_hash: environmentHash, source_revision: revision(backendRoot), applied_migration_revision: revision(backendRoot), workspace_revision: revision(workspaceRoot), runtime: { node: process.version, postgres: null }, topology: environmentManifest.topology, isolation_load_policy: environmentManifest.isolation_load_policy, warm_up_count: WARM_UPS, sample_count: SAMPLES, target_count: TARGET_COUNT });
+      await finalizeArtifact(artifact, { fixture_manifest: fixtureManifest, fixture_manifest_hash: fixtureHash, environment_manifest: environmentManifest, environment_manifest_hash: environmentHash, source_revision: revision(backendRoot), workspace_revision: revision(workspaceRoot), runtime: { node: process.version, postgres: null }, topology: environmentManifest.topology, isolation_load_policy: environmentManifest.isolation_load_policy, warm_up_count: WARM_UPS, sample_count: SAMPLES, target_count: TARGET_COUNT });
       moduleRef = await Test.createTestingModule({ imports: [ConfigModule.forRoot({ isGlobal: true, validationSchema: envValidationSchema }), PrismaModule, AccessControlModule] }).compile();
       await moduleRef.init();
       prisma = moduleRef.get(PrismaService);
@@ -132,7 +131,16 @@ describe('ACM9 PostgreSQL baseline (explicit opt-in)', () => {
       const prismaService = prisma;
       if (!prismaService) throw new Error('Prisma service was not resolved');
       const postgres = await prismaService.$queryRaw<Array<{ version: string; server_version: string }>>`SELECT version(), current_setting('server_version') AS server_version`;
-      await finalizeArtifact(artifact, { runtime: { node: process.version, postgres: postgres[0] } });
+      const postgresConfiguration = await prismaService.$queryRawUnsafe('SELECT name, setting FROM pg_settings WHERE name IN (\'max_connections\', \'shared_buffers\', \'work_mem\', \'statement_timeout\') ORDER BY name');
+      const migrations = await prismaService.$queryRawUnsafe('SELECT migration_name, checksum, finished_at FROM "_prisma_migrations" WHERE finished_at IS NOT NULL ORDER BY finished_at');
+      await finalizeArtifact(artifact, { runtime: { node: process.version, postgres: postgres[0] }, applied_migration_revision: migrations, postgres_configuration: postgresConfiguration });
+      if (role === 'final') {
+        const baselinePath = process.env.ACM9_BASELINE_ARTIFACT;
+        if (!baselinePath) throw new Error('ACM9 final requires ACM9_BASELINE_ARTIFACT');
+        const baseline = await readArtifact(baselinePath);
+        if (!isCompatibleBaseline(baseline, { protocolVersion: 'ACM9-MVP-v1', fixtureHash, environmentHash })) throw new Error('ACM9 final requires a compatible PASS baseline');
+        await finalizeArtifact(artifact, { baseline_artifact_path: baselinePath, baseline_run_id: baseline.run_id });
+      }
       await seed();
       for (const gate of ['reporting', 'direct_pp', 'colleague', 'mixed'] as const) {
         for (const depth of DEPTHS) {
