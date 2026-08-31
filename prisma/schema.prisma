@@ -37,6 +37,11 @@ model User {
   relationships     Relationship[] @relation("RelationshipSubject")
   incomingRelations Relationship[] @relation("RelationshipReportsTo")
 
+  // Access Control attachments. Back-relations only: Prisma requires them for
+  // the foreign keys below, and no User Management behavior reads them.
+  userPolicies      UserPolicy[]
+  bootstrapRootOf   AccessControlBootstrap?
+
   @@map("users")
 }
 
@@ -80,4 +85,92 @@ model Project {
   relationships Relationship[]
 
   @@map("projects")
+}
+
+
+// ---------------------------------------------------------------------------
+// Access Control functional-role kernel (AD-4 / FR-AMD-1, SPEC CAP-3).
+//
+// The type separation this model exists to guarantee is enforced in reviewed
+// custom migration SQL, not here: Prisma cannot express the FR/AR row-shape
+// CHECK, the PARTIAL unique FR role key, the `Policies(id, type)` support key,
+// or the composite foreign key that makes an AR-policy grant impossible. Read
+// the migration alongside these models — the models alone understate the
+// contract.
+// ---------------------------------------------------------------------------
+
+model Policy {
+  id         String  @id @default(uuid(7))
+  operator   String  @default("==")
+  // Polymorphic by design — no database FK, because `targetType` selects the
+  // table (AD-10). Both are NULL on FR rows.
+  targetType String?
+  targetId   String?
+  // The FR role key. Unique only among FR rows: an AR policy may legally carry
+  // the same `targetRole` and is a different object.
+  targetRole String?
+  type       String
+  managedBy  String
+
+  userPolicies UserPolicy[]
+  bootstrap    AccessControlBootstrap?
+
+  @@map("Policies")
+}
+
+model Permission {
+  id          String @id @default(uuid(7))
+  // Immutable lowercase `context:action`. Append-only: no writer updates a key
+  // in place.
+  key         String @unique
+  description String
+
+  grants PolicyPermission[]
+
+  @@map("Permissions")
+}
+
+model PolicyPermission {
+  policyId     String
+  // Stored discriminator. Fixed to 'FR' by CHECK and joined to
+  // `Policies(id, type)` by a composite foreign key in the migration, which is
+  // what makes an AR-policy grant impossible at the database boundary. There is
+  // deliberately NO Prisma relation on `policyId`: a Prisma relation would emit
+  // a simple FK to `Policies(id)`, which cannot constrain the type at all.
+  policyType   String @default("FR")
+  permissionId String
+
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+
+  @@id([policyId, permissionId])
+  // Permission-first: ACM-2 enters from a permission key, so that column leads.
+  // The primary key already covers (policyId, permissionId).
+  @@index([permissionId, policyId])
+  @@map("PolicyPermissions")
+}
+
+model UserPolicy {
+  userId   String
+  policyId String
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  policy Policy @relation(fields: [policyId], references: [id], onDelete: Restrict)
+
+  @@id([userId, policyId])
+  @@map("UserPolicies")
+}
+
+// Durable bootstrap provenance. Its ABSENCE is meaningful — it is what permits
+// adoption on a first run — so the singleton is enforced by constraints rather
+// than convention.
+model AccessControlBootstrap {
+  key                 String @id
+  normalizedRootEmail String @unique
+  rootUserId          String @unique
+  policyId            String @unique
+
+  user   User   @relation(fields: [rootUserId], references: [id], onDelete: Restrict)
+  policy Policy @relation(fields: [policyId], references: [id], onDelete: Restrict)
+
+  @@map("AccessControlBootstrap")
 }
