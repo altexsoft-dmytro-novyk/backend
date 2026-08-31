@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { execFile } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { uuidv7 } from 'uuidv7';
 import { PrismaClient } from '../../src/generated/prisma/client';
@@ -236,7 +237,9 @@ describe('ACM-1 CAP-3 — production entrypoint is wired', () => {
     // Break caught: without the named script every failure-path test below
     // could pass on a missing-script nonzero exit instead of on the behavior
     // it claims to prove. This test makes the red state unambiguous.
-    const pkg = await import(`${backendRoot}/package.json`);
+    const pkg = JSON.parse(
+      readFileSync(`${backendRoot}/package.json`, 'utf8'),
+    ) as { scripts: Record<string, string> };
     expect(Object.keys(pkg.scripts)).toContain('db:bootstrap:access-control');
   });
 });
