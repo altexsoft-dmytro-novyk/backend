@@ -232,9 +232,14 @@ async function createFixtureUser(options: {
 }
 
 async function deleteRunUsers(): Promise<void> {
+  // Matches the suite prefix rather than this run's id: a run that dies before
+  // teardown would otherwise leave fixture users behind forever, and they
+  // accumulate in the shared development database. The prefix is unique to this
+  // suite, so this cleans up after earlier runs without touching anyone else's
+  // fixtures.
   const users = await prisma.user.findMany({ select: { id: true, workEmail: true } });
   const ids = users
-    .filter(({ workEmail }) => workEmail.toLowerCase().includes(runId))
+    .filter(({ workEmail }) => workEmail.toLowerCase().startsWith('acm1r-'))
     .map(({ id }) => id);
   if (ids.length > 0) {
     await prisma.user.deleteMany({ where: { id: { in: ids } } });
