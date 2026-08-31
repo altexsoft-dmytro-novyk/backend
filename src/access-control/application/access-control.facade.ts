@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { Audience } from '../domain/audience';
 import { AudienceResolverService } from '../domain/services/audience-resolver.service';
+import { FunctionalRoleEvaluatorService } from '../domain/services/functional-role-evaluator.service';
 
 /**
  * The authorization entry point other contexts consume (AD-9). Phase 0 exposes
@@ -14,7 +15,15 @@ import { AudienceResolverService } from '../domain/services/audience-resolver.se
  */
 @Injectable()
 export class AccessControlFacade {
-  constructor(private readonly resolver: AudienceResolverService) {}
+  constructor(
+    private readonly resolver: AudienceResolverService,
+    private readonly functionalRoles: FunctionalRoleEvaluatorService,
+  ) {}
+
+  /** Live global functional-permission decision (CAP-4); never cached. */
+  isAllowed(userId: string, permissionKey: string): Promise<boolean> {
+    return this.functionalRoles.isAllowed(userId, permissionKey);
+  }
 
   /**
    * Live per-request resolution for one viewer over zero or more targets.
