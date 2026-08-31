@@ -123,8 +123,16 @@ describe('ACM9 PostgreSQL baseline (explicit opt-in)', () => {
       const workspaceRoot = resolve(backendRoot, '../..');
       const fixtureManifest = { manifest_version: 'ACM9-MANIFEST-v1', target_count: TARGET_COUNT, active_targets: TARGET_COUNT, gates: ['reporting', 'direct_pp', 'colleague', 'mixed'], balanced_depth: 5, acyclic_depths: [25, 50, 100, 200, 300, 400, 499], warm_ups: WARM_UPS, samples: SAMPLES, nullable_baseline_run_id: null };
       fixtureHash = manifestHash(fixtureManifest);
+      // memory_free_bytes is a point-in-time system reading, not a machine/
+      // runtime CONFIGURATION property — unlike every other field here, it
+      // changes from one moment to the next on the same otherwise-identical
+      // machine and can never be expected to match a prior run. It is kept in
+      // the recorded manifest for diagnostics but deliberately excluded from
+      // the hashed subset: the hash's job is to prove the CONFIGURATION was
+      // unchanged, not that no bytes moved.
       const environmentManifest = { manifest_version: 'ACM9-MANIFEST-v1', postgres_configuration: null, node_version: process.version, platform: `${platform()} ${release()} ${arch()}`, cpu_count: cpus().length, available_parallelism: availableParallelism(), memory_total_bytes: totalmem(), memory_free_bytes: freemem(), topology: 'local PostgreSQL via DATABASE_URL', isolation_load_policy: 'single Jest worker; dedicated UUID fixture rows; no concurrent harness load', nullable_container_limits: null };
-      environmentHash = manifestHash(environmentManifest);
+      const { memory_free_bytes: _memoryFreeBytes, ...hashedEnvironmentManifest } = environmentManifest;
+      environmentHash = manifestHash(hashedEnvironmentManifest);
       await finalizeArtifact(artifact, { fixture_manifest: fixtureManifest, fixture_manifest_hash: fixtureHash, environment_manifest: environmentManifest, environment_manifest_hash: environmentHash, source_revision: revision(backendRoot), workspace_revision: revision(workspaceRoot), runtime: { node: process.version, postgres: null }, topology: environmentManifest.topology, isolation_load_policy: environmentManifest.isolation_load_policy, warm_up_count: WARM_UPS, sample_count: SAMPLES, target_count: TARGET_COUNT });
       moduleRef = await Test.createTestingModule({ imports: role === 'final' ? [AppModule] : [ConfigModule.forRoot({ isGlobal: true, validationSchema: envValidationSchema }), PrismaModule, AccessControlModule] }).compile();
       await moduleRef.init();
