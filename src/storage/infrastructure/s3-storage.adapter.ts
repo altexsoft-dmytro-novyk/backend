@@ -61,6 +61,9 @@ export class S3StorageAdapter implements ObjectStoragePort, OnModuleInit {
         Key: key,
         Body: content,
         ContentType: contentType,
+        // The reference we hand back is loaded directly by the browser
+        // (e.g. an <img> src), so the object must be anonymously readable.
+        ACL: 'public-read',
       }),
     );
 

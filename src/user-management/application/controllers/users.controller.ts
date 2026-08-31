@@ -13,13 +13,17 @@ import {
   Put,
   Query,
   Req,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { randomUUID } from 'crypto';
 import { AccessControlAction } from '../../../access-control/application/actions/access-control.action';
 import { SessionAuthGuard } from '../../../access-control/application/guards/session-auth.guard';
 import type { AuthenticatedRequest } from '../../../access-control/application/guards/session-auth.guard';
 import { Prisma } from '../../../generated/prisma/client';
+import { StoreObjectAction } from '../../../storage/application/actions/store-object.action';
 import {
   DeparturePendingError,
   DepartureService,
@@ -66,6 +70,16 @@ const S1_WRITABLE_FIELDS = [
   'workEmail',
 ];
 
+// S1 profile photo (§3.2 footnote): accepted image types mapped to the file
+// extension used in the storage key, and the upload size ceiling enforced by
+// multer (a larger body is rejected as 413 before it buffers).
+const PHOTO_MIME_TYPES: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+};
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
+
 const CUSTOM_FIELD_DEFS = [
   { key: 'managementOnlyField', visibility: 'management' as const },
   { key: 'employeeVisibleField', visibility: 'employee' as const },
@@ -80,6 +94,7 @@ export class UsersController {
     private readonly repo: ProfileDataRepository,
     private readonly relationshipWrite: RelationshipWriteService,
     private readonly departure: DepartureService,
+    private readonly storeObject: StoreObjectAction,
   ) {}
 
   // --- /users list (AC-AD-12 empty bulk, AC-AD-15 active-list exclusion) ---
@@ -217,20 +232,58 @@ export class UsersController {
       companyJoinDate: user.companyJoinDate,
     };
 
+    // §4.2: the profile header shows the person's department, manager and
+    // people partner. Read-only, resolved alongside S1 (which every audience
+    // including colleague may read), so no new leak surface.
+    const relations = await this.repo.getProfileHeaderRelations(id);
+
+    // §3.3.5: the viewer's own none/read/write level for every section, so the
+    // client renders exactly the sections they may see and shows an edit
+    // affordance only where they may write — never a dead button, never a
+    // section fetched only to 404. This is the same live `canAccessSection`
+    // decision each section endpoint already enforces, surfaced once up front.
+    const SECTION_IDS = [
+      's1',
+      's2',
+      's3',
+      's4',
+      's5',
+      's6',
+      's7',
+      's8',
+      's9',
+      's10',
+      's11',
+      's12',
+      's13',
+      's14',
+      's15',
+      's16',
+    ] as const;
+    const levels = await Promise.all(
+      SECTION_IDS.map((section) =>
+        this.accessControl.canAccessSection(req.actorId, id, section),
+      ),
+    );
+    const access = Object.fromEntries(
+      SECTION_IDS.map((section, i) => [section, levels[i]]),
+    ) as Record<(typeof SECTION_IDS)[number], 'none' | 'read' | 'write'>;
+
     const body: Record<string, unknown> = {
       identity,
       ...identity,
       employmentStatus,
+      access,
+      department: relations.department,
+      manager: relations.manager,
+      peoplePartner: relations.peoplePartner,
+      mentor: null,
       projects: colleagueOnly
         ? projects.map((p) => ({ name: p.name }))
         : projects,
     };
 
-    const s13Level = await this.accessControl.canAccessSection(
-      req.actorId,
-      id,
-      's13',
-    );
+    const s13Level = access.s13;
     if (s13Level !== 'none') {
       const flag = await this.repo.getSingleton(id, 's13', 'flag');
       const pairs = await this.repo.listSectionRecords(id, 's13');
@@ -240,6 +293,20 @@ export class UsersController {
           .filter((r) => r.data.kind === 'pair')
           .map((r) => ({ id: r.id, ...r.data })),
       };
+
+      // §4.11: the mentor is the holder of an active pair where this person
+      // is the mentee. Only resolvable when the viewer can see S13 at all.
+      const mentorPair = pairs.find(
+        (r) =>
+          r.data.kind === 'pair' &&
+          r.data.menteeId === id &&
+          (r.data.status ?? 'active') === 'active',
+      );
+      if (mentorPair) {
+        body.mentor = await this.repo.getUserName(
+          mentorPair.data.mentorId as string,
+        );
+      }
     }
 
     return body;
@@ -321,7 +388,14 @@ export class UsersController {
   }
 
   @Put(':id/photo')
-  async uploadPhoto(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+  @UseInterceptors(
+    FileInterceptor('photo', { limits: { fileSize: MAX_PHOTO_BYTES } }),
+  )
+  async uploadPhoto(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+  ) {
     const user = await this.repo.getUser(id);
     if (!user) throw new NotFoundException();
     // S1's photo field is RW for Self as a documented per-command exception
@@ -332,7 +406,21 @@ export class UsersController {
     } else if (await this.accessControl.isDeparted(id)) {
       throw new ForbiddenException();
     }
-    const photoUrl = `https://storage.example/photos/${id}/${randomUUID()}.png`;
+
+    if (!file) throw new BadRequestException('a "photo" file part is required');
+    const ext = PHOTO_MIME_TYPES[file.mimetype];
+    if (!ext) {
+      throw new BadRequestException('photo must be a PNG, JPEG or WebP image');
+    }
+
+    // Store the bytes through storage/'s single cross-context entry point
+    // (AD-2) and persist only the reference it returns.
+    const key = `photos/${id}/${randomUUID()}.${ext}`;
+    const photoUrl = await this.storeObject.execute(
+      key,
+      file.buffer,
+      file.mimetype,
+    );
     await this.repo.updateUser(id, { photo: photoUrl });
     return { photoUrl };
   }

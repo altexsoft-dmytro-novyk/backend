@@ -2,7 +2,10 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import { PrismaService } from '../../../src/prisma/prisma.service';
+import { NodemailerMagicLinkMailer } from '../../../src/user-management/infrastructure/nodemailer-magic-link-mailer.adapter';
 import { bootstrapApp } from '../fixtures/app';
+import { RecordingMagicLinkMailer } from '../fixtures/fake-mailer';
+import { hashToken } from '../fixtures/magic-link';
 import {
   mintExpiredMagicLinkToken,
   mintMagicLinkToken,
@@ -38,15 +41,25 @@ import {
 describe('Magic-link authentication — POST /auth/magic-link(/consume) (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
+  let mailer: RecordingMagicLinkMailer;
   const runId = newRunId('auth');
   let departmentId: string;
 
   beforeAll(async () => {
-    const bootstrapped = await bootstrapApp();
+    const bootstrapped = await bootstrapApp((builder) =>
+      builder
+        .overrideProvider(NodemailerMagicLinkMailer)
+        .useClass(RecordingMagicLinkMailer),
+    );
     app = bootstrapped.app;
     prisma = bootstrapped.prisma;
+    mailer = bootstrapped.moduleRef.get(NodemailerMagicLinkMailer);
     const dept = await createDepartment(prisma, runId);
     departmentId = dept.id;
+  });
+
+  beforeEach(() => {
+    mailer.reset();
   });
 
   afterAll(async () => {
@@ -74,6 +87,18 @@ describe('Magic-link authentication — POST /auth/magic-link(/consume) (e2e)', 
       expect(Object.keys(body)).not.toEqual(
         expect.arrayContaining(['token', 'password']),
       );
+
+      // B1: exactly one sign-in email is delivered, to Alice, carrying a raw
+      // token that hashes to a freshly minted, unconsumed MagicLinkToken row.
+      expect(mailer.sent).toHaveLength(1);
+      expect(mailer.sent[0].workEmail).toBe(alice.workEmail);
+      const tokenRow = await prisma.magicLinkToken.findUnique({
+        where: { tokenHash: hashToken(mailer.sent[0].rawToken) },
+      });
+      expect(tokenRow).not.toBeNull();
+      expect(tokenRow?.userId).toBe(alice.id);
+      expect(tokenRow?.consumedAt).toBeNull();
+      expect(tokenRow?.dispatchStatus).toBe('sent');
     });
   });
 
@@ -87,6 +112,8 @@ describe('Magic-link authentication — POST /auth/magic-link(/consume) (e2e)', 
 
       const body = res.body as Record<string, unknown>;
       expect(body.sent).toBe(true);
+      // B1: no email is dispatched for an address with no account.
+      expect(mailer.sent).toHaveLength(0);
       // No email-adapter DI seam exists yet to assert "zero dispatch"
       // against directly (same gap the retired registration.e2e-spec.ts's
       // um-reg-13 comment documented) — and there is no User/MagicLinkToken
@@ -94,6 +121,31 @@ describe('Magic-link authentication — POST /auth/magic-link(/consume) (e2e)', 
       // all. um-auth-06 Test 1 below adds a DB-observable proxy (zero
       // MagicLinkToken rows minted) for the deactivated case, where a real
       // account id does exist to query against.
+    });
+  });
+
+  describe('um-auth-01b · a mail transport failure never fails the request', () => {
+    it('still returns 200 { sent: true } and records dispatchStatus=failed (NFR-3)', async () => {
+      const alice = await createSeededUser(
+        prisma,
+        runId,
+        'Alice-auth01b',
+        departmentId,
+      );
+      mailer.nextResult = 'failed';
+
+      const res = await request(app.getHttpServer())
+        .post('/auth/magic-link')
+        .set('authorization', '')
+        .send({ email: alice.workEmail })
+        .expect(200);
+
+      expect((res.body as Record<string, unknown>).sent).toBe(true);
+      expect(mailer.sent).toHaveLength(1);
+      const tokenRow = await prisma.magicLinkToken.findUnique({
+        where: { tokenHash: hashToken(mailer.sent[0].rawToken) },
+      });
+      expect(tokenRow?.dispatchStatus).toBe('failed');
     });
   });
 
@@ -207,6 +259,8 @@ describe('Magic-link authentication — POST /auth/magic-link(/consume) (e2e)', 
         where: { userId: colin.id },
       });
       expect(tokens).toHaveLength(0);
+      // B1: and no email is delivered either.
+      expect(mailer.sent).toHaveLength(0);
     });
 
     it('Test 2 — a pre-deactivation token must not yield a session', async () => {

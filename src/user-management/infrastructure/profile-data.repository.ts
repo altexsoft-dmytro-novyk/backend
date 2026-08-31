@@ -159,6 +159,61 @@ export class ProfileDataRepository {
     return assignments.map((a) => ({ id: a.project.id, name: a.project.name }));
   }
 
+  // §4.2 profile header: the person's department (always present — departmentId
+  // is non-null), plus the current manager (`Relationship type='direct'`) and
+  // people partner (`type='people_partner'`) edges resolved to a display name.
+  // Read-only; rides along with S1, so it adds no leak surface a caller who
+  // already passed the S1 read gate could not otherwise reach.
+  async getProfileHeaderRelations(userId: string): Promise<{
+    department: { id: string; name: string } | null;
+    manager: { id: string; name: string } | null;
+    peoplePartner: { id: string; name: string } | null;
+  }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { department: { select: { id: true, name: true } } },
+    });
+
+    const edges = await this.prisma.relationship.findMany({
+      where: {
+        subjectUserId: userId,
+        type: { in: ['direct', 'people_partner'] },
+      },
+      select: {
+        type: true,
+        holder: { select: { id: true, firstName: true, lastName: true } },
+      },
+    });
+
+    const pick = (edgeType: 'direct' | 'people_partner') => {
+      const edge = edges.find((e) => e.type === edgeType);
+      return edge
+        ? {
+            id: edge.holder.id,
+            name: `${edge.holder.firstName} ${edge.holder.lastName}`,
+          }
+        : null;
+    };
+
+    return {
+      department: user?.department ?? null,
+      manager: pick('direct'),
+      peoplePartner: pick('people_partner'),
+    };
+  }
+
+  async getUserName(
+    userId: string,
+  ): Promise<{ id: string; name: string } | null> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, firstName: true, lastName: true },
+    });
+    return user
+      ? { id: user.id, name: `${user.firstName} ${user.lastName}` }
+      : null;
+  }
+
   // --- SectionRecord (generic, per schema.prisma's SectionRecord doc comment) ---
 
   async listSectionRecords(

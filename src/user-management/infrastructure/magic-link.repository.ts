@@ -64,6 +64,21 @@ export class MagicLinkRepository {
   }
 
   /**
+   * Records the outcome of the outbound email attempt (NFR-3). `mint` writes
+   * an optimistic `'sent'`; this flips it to `'failed'` when the mailer
+   * reported a transport error, without ever failing the HTTP request.
+   */
+  async markDispatchStatus(
+    id: string,
+    status: 'sent' | 'failed',
+  ): Promise<void> {
+    await this.prisma.magicLinkToken.update({
+      where: { id },
+      data: { dispatchStatus: status },
+    });
+  }
+
+  /**
    * Atomically consumes a valid, unexpired, not-yet-consumed token
    * (AD-21 single-use) — the `consumedAt: null` guard in the WHERE clause,
    * combined with Postgres's row-level atomicity for a single UPDATE, is

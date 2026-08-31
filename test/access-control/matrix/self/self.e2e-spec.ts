@@ -70,7 +70,7 @@ describe('Matrix — Self column, §3.2 (e2e)', () => {
     const res = await request(app.getHttpServer())
       .put(`/users/${aliceId}/photo`)
       .set('authorization', aliceToken)
-      .send({ contentType: 'image/png' });
+      .attach('photo', Buffer.from('fake-png-bytes'), 'alice.png');
     expect([200, 204]).toContain(res.status);
     expect(res.body).toHaveProperty('photoUrl');
   });

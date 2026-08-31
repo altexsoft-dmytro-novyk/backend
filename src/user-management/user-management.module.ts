@@ -4,6 +4,7 @@ import { AccessControlModule } from '../access-control/access-control.module';
 import { ActionItemsController } from './application/controllers/action-items.controller';
 import { AuthController } from './application/controllers/auth.controller';
 import { DepartmentsController } from './application/controllers/departments.controller';
+import { MeController } from './application/controllers/me.controller';
 import { MentorshipPairsController } from './application/controllers/mentorship-pairs.controller';
 import { UsersController } from './application/controllers/users.controller';
 import { DEPARTURE_REPOSITORY_PORT } from './domain/interfaces/departure-repository.port';
@@ -13,6 +14,7 @@ import { RelationshipWriteService } from './domain/services/relationship-write.s
 import { DepartureExecutorService } from './infrastructure/departure-executor.service';
 import { DepartureRepository } from './infrastructure/departure.repository';
 import { MagicLinkRepository } from './infrastructure/magic-link.repository';
+import { NodemailerMagicLinkMailer } from './infrastructure/nodemailer-magic-link-mailer.adapter';
 import { ProfileDataRepository } from './infrastructure/profile-data.repository';
 import { RelationshipWriteRepository } from './infrastructure/relationship-write.repository';
 
@@ -30,6 +32,7 @@ import { RelationshipWriteRepository } from './infrastructure/relationship-write
   providers: [
     ProfileDataRepository,
     MagicLinkRepository,
+    NodemailerMagicLinkMailer,
     RelationshipWriteService,
     {
       provide: RELATIONSHIP_WRITE_REPOSITORY_PORT,
@@ -41,6 +44,7 @@ import { RelationshipWriteRepository } from './infrastructure/relationship-write
   ],
   controllers: [
     UsersController,
+    MeController,
     MentorshipPairsController,
     ActionItemsController,
     AuthController,
