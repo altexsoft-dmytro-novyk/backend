@@ -82,9 +82,19 @@ function validateRootEligibility(
 }
 
 function isUniqueWorkEmailViolation(error: unknown): boolean {
+  if (
+    !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+    error.code !== 'P2002'
+  ) {
+    return false;
+  }
+
+  const target = error.meta?.target;
+  const targets = Array.isArray(target) ? target : [target];
   return (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    error.code === 'P2002'
+    targets.some(
+      (value) => value === 'users_workEmail_key' || value === 'workEmail',
+    ) || error.message.includes('users_workEmail_key')
   );
 }
 
