@@ -515,7 +515,7 @@ describe('ACM1R-FB-11 — the grant table type separation is a database boundary
     const supportKeys = await sql<{ conname: string }>(
       `SELECT conname FROM pg_constraint
        WHERE conrelid = '"Policies"'::regclass AND contype = 'u'
-         AND (SELECT array_agg(attname ORDER BY attname)
+         AND (SELECT array_agg(attname::text ORDER BY attname::text)
               FROM pg_attribute
               WHERE attrelid = conrelid AND attnum = ANY(conkey)) = ARRAY['id','type']`,
     );
@@ -1373,16 +1373,44 @@ describe('ACM1R-FB-27 — a failure after writes leaves no partial state', () =>
     // to have been provisioned.
     const root = await seedRoot();
 
-    const bootstrap = startBootstrap(root.email);
+    // Hold the LAST table the bootstrap writes. That pins it inside its own
+    // open transaction with the permission writes already done, which is what
+    // makes the observation below deterministic rather than a race against a
+    // transaction that would otherwise commit in a few milliseconds.
+    const holder = new PrismaClient({
+      adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
+    });
+    let releaseHolder: () => void = () => {};
+    const holderDone = new Promise<void>((resolve) => (releaseHolder = resolve));
+    const holding = holder.$transaction(
+      async (tx) => {
+        await tx.$executeRawUnsafe(
+          `LOCK TABLE "UserPolicies" IN EXCLUSIVE MODE`,
+        );
+        await holderDone;
+      },
+      { timeout: 90_000, maxWait: 90_000 },
+    );
+
     try {
-      // Proof the write happened: a RowExclusiveLock on "Permissions" is held
-      // by another backend. The inserted rows are still invisible to us,
-      // because they are inside its uncommitted transaction.
-      await waitForForeignWriteLock('Permissions');
+      const bootstrap = startBootstrap(root.email);
+      try {
+        // Proof the write happened: a RowExclusiveLock on "Permissions" is held
+        // by another backend.
+        await waitForForeignWriteLock('Permissions');
+        // ...and proof it is UNCOMMITTED: those rows are invisible to us. Both
+        // halves are needed. The lock alone would not rule out a committed
+        // write, and invisibility alone would not rule out no write at all.
+        expect(await countOf('Permissions')).toBe(0);
+      } finally {
+        bootstrap.kill();
+      }
+      await bootstrap.exited;
     } finally {
-      bootstrap.kill();
+      releaseHolder();
+      await holding;
+      await holder.$disconnect();
     }
-    await bootstrap.exited;
 
     expect(await countOf('Permissions')).toBe(0);
     expect(await countOf('Policies')).toBe(0);
