@@ -37,6 +37,18 @@ import {
 // The allow/deny rule encoded here is the PROVISIONAL mapping recorded in the
 // suite README: self/reporting/pp allow, colleague denies. It is an Access
 // Control assumption pending answer 3 of the User Management contract request.
+//
+// SUPERSEDED — 2026-09-01 (human product decision). User Management answered
+// Q3 the OTHER way: a colleague GET /users/:id returns the S1 identity card
+// (200); only an empty audience denies (leak-free 404). See
+// docs/test-cases/access-control-foundation/README.md and
+// _bmad-output/specs/spec-user-management-access-control-adoption/SPEC.md.
+// The resolver is UNAFFECTED (Colin/Frank/Hana still resolve to the
+// `colleague` fallback), but the `.expect(403)` assertions in ACF-AU-05 /
+// ACF-FC-01 / ACF-FC-02 below now encode a contract that no longer holds and
+// must be reworked as resolver audience-set assertions (like ACF-FC-04) in a
+// fresh AD-1 pass with its own approval. Not done here — left as-is so the
+// supersession is visible rather than silently rewritten.
 class FacadeBackedAccessControlAdapter implements AccessControlPort {
   constructor(private readonly facade: AccessControlFacade) {}
 
