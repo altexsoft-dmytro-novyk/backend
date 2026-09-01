@@ -3,6 +3,20 @@ import type { TestApp } from './fixtures';
 import { RunFixtures, bearer, bootstrapTestApp } from './fixtures';
 
 /**
+ * ============================================================================
+ * DEFERRED — implemented later. This suite belongs to Story 0.2 (UMAC-2), the
+ * write path, NOT to Story 0.1 (UMAC-1) which is read-only. UMAC-2 has no
+ * Stage-1 approval yet and is blocked on Open Decision (i) = option (a): the
+ * `user-management:edit` permission does not exist in the kernel catalog, and
+ * adding it is a separate three-stage AD-1 kernel-seed sequence that has not
+ * started. The one positive test here (a granted reporting-line manager
+ * PATCHes S1) also assumes a not-yet-approved product rule (managers get
+ * `user-management:edit` by default). Kept in the tree per the owner's
+ * instruction (2026-09-01); it will be re-derived / activated by the UMAC-2
+ * Stage-2 dispatch once UMAC-2 Stage 1 is approved and the permission is
+ * seeded. Do not treat its state as UMAC-1 evidence.
+ * ============================================================================
+ *
  * Epic 0 — Access Control Adoption · Story 0.2 (UMAC-2) · AD-1 Stage 2.
  *
  * Scenarios (one E2E per assertion, `UMAC-xx` id in the test title):
