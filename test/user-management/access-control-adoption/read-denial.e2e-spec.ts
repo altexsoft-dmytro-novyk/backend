@@ -14,45 +14,45 @@ import {
  * Scenario: docs/test-cases/user-management/access-control-adoption/
  *   umac-05-unresolved-session-read-denied.md
  *
- * The ONLY `GET /users/:id` denial is a genuinely unresolvable identity — the
- * viewer (or target) is not an active `User`, so
- * `AccessControlFacade.resolveAudiences` returns an empty `Set`: the viewer is
- * never Self and never even the Colleague floor. The scenario's stated target
- * is a leak-free `404`.
+ * `GET /users/:id` has TWO denial shapes and NO `404` authorization branch (the
+ * earlier "leak-free 404" convention was withdrawn by human product decision on
+ * 2026-09-01 — this is an internal employee directory, standard REST codes are
+ * clearer):
+ *   - an unresolved session (no/invalid token, a literal persona placeholder,
+ *     or a deactivated caller) is the SESSION layer's responsibility → `401`
+ *     once the Epic 2 magic-link middleware lands. `InterimSessionResolverAdapter`
+ *     is lax (it parses the token into `{ userId: <string> }` without checking
+ *     the row exists or is active), so during the interim such a request reaches
+ *     `AccessControlGuard`, resolves to an empty audience, and surfaces as
+ *     `403`. That interim `403` is what this suite asserts — NOT `401`.
+ *   - an authenticated ACTIVE viewer whose audience over the target is empty
+ *     (on this read route `colleague` is the floor, so this means the target is
+ *     not an active `User`) → `403`. No existence distinction: a forbidden
+ *     target and a missing target both return `403`. This is exactly what
+ *     `AccessControlGuard` produces today from a denied `isAllowedForTarget`, so
+ *     no guard or controller change is in scope for this story.
  *
  * WHY RED (per test):
  *   - Test 1 (`Bearer <token:Bob>` literal) — **red-because-not-implemented
- *     (empty-audience denial).** The interim adapter's
+ *     (empty-audience denial).** The interim access-control adapter's
  *     `isAllowedForTarget` returns `Boolean('Bob') === true`, so the guard lets
  *     the request through and `GET /users/:id` returns `200` with the whole
- *     row. Asserting `404` fails until `UMAC-1-production` lands.
+ *     row. Asserting `403` fails until `UMAC-1-production` rebinds the port to
+ *     the real facade (unconfirmed viewer → empty audience → deny).
  *   - Test 2 (deactivated caller) — **red-because-not-implemented.** Same
  *     mechanism: `Boolean(<uuid>) === true` under the interim adapter → `200`.
  *     Under the real facade the identity port filters `isActive = true`, so the
- *     viewer is unconfirmed → empty audience → deny.
- *   - Test 3 (non-existent target, valid active caller) — **already-green
- *     characterization.** The interim guard lets the caller through, then
+ *     viewer is unconfirmed → empty audience → deny → `403`.
+ *   - Test 3 (non-existent target, valid active caller) — **red-because-not-
+ *     implemented.** The interim guard lets the caller through, then
  *     `GetUserAction` throws `NotFoundException` because the row is missing →
- *     `404` today. Under the real facade the empty audience denies and the
- *     scenario also maps that to `404`. Marked green; kept (not skipped) so the
- *     leak-free-body contract stays covered.
- *
- * MECHANISM NOTE (scenario "Mechanism — open for the scenario stage"):
- * `AccessControlGuard` currently maps a denied `isAllowedForTarget` to
- * `ForbiddenException` → `403`. The scenario's target `404` needs the read
- * action / controller to treat an empty audience (or missing target) as
- * `NotFound`; `UMAC-1-production`'s `invoke_dev_with` states that as the
- * production intent ("mapped to a leak-free 404 (not 403) ... the read action
- * treats an empty audience / missing target as NotFound"). The primary
- * assertion below therefore follows the scenario: `404`.
- * TODO(UMAC-1-production): if a shipped Story 0.1 leaves `AccessControlGuard`
- * unchanged, an unresolved-identity denial surfaces as `403` — the documented
- * fallback, not the target. Confirm 404 vs 403 at the production stage.
+ *     `404` today. The approved scenario requires `403` (no existence
+ *     distinction); under the real facade the empty audience denies with `403`.
  *
  * AD-3: real `AppModule`, real Prisma / migrated PostgreSQL, no provider
  * overrides.
  */
-describe('UMAC-1 Stage 2 (red) — GET /users/:id empty-audience denial is a leak-free 404 (e2e)', () => {
+describe('UMAC-1 Stage 2 (red) — GET /users/:id denials are 403 (never 404) (e2e)', () => {
   let testApp: TestApp;
   let fx: RunFixtures;
 
@@ -74,23 +74,26 @@ describe('UMAC-1 Stage 2 (red) — GET /users/:id empty-audience denial is a lea
   });
 
   // docs/test-cases/user-management/access-control-adoption/umac-05-unresolved-session-read-denied.md
-  it('UMAC-05 Test 1 — literal placeholder id (Bearer <token:Bob>) → leak-free 404', async () => {
+  it('UMAC-05 Test 1 — literal placeholder id (Bearer <token:Bob>) → 403 denial (leak-free body)', async () => {
     const target = await fx.user('umac05-target', { firstName: 'Target' });
 
     // `Bearer <token:Bob>` resolves through InterimSessionResolverAdapter to
     // `{ userId: 'Bob' }` — the string id 'Bob', which matches no active User.
-    // This is the exact case the E2E audit says "passes" under the interim
-    // adapter (`Boolean('Bob') === true` → 200) and must fail under the real
-    // facade.
+    // This is the exact case that "passes" under the interim access-control
+    // adapter (`Boolean('Bob') === true` → 200) and must be denied under the
+    // real facade.
     const res = await request(testApp.app.getHttpServer())
       .get(`/users/${target.id}`)
       .set('authorization', 'Bearer <token:Bob>');
 
-    expect(res.status).toBe(404);
+    // Interim session resolver is lax → the guard denies the empty audience →
+    // `403`. TARGET END STATE once the real magic-link middleware lands: `401`
+    // (the session never resolves). Do NOT assert `401` here.
+    expect(res.status).toBe(403);
     expectLeakFreeBody(res.body, target);
   });
 
-  it('UMAC-05 Test 2 — deactivated caller (isActive: false) → leak-free 404', async () => {
+  it('UMAC-05 Test 2 — deactivated caller (isActive: false) → 403 denial (leak-free body)', async () => {
     const target = await fx.user('umac05-target2', { firstName: 'Target' });
     const deactivatedCaller = await fx.user('umac05-deactivated', {
       firstName: 'Deactivated',
@@ -101,11 +104,15 @@ describe('UMAC-1 Stage 2 (red) — GET /users/:id empty-audience denial is a lea
       .get(`/users/${target.id}`)
       .set('authorization', bearer(deactivatedCaller.id));
 
-    expect(res.status).toBe(404);
+    // Kernel MVP runtime eligibility includes `User.isActive`, so an inactive
+    // viewer resolves to an empty audience → the guard denies → `403`. TARGET
+    // END STATE once the real magic-link middleware lands: `401`. Do NOT assert
+    // `401` here.
+    expect(res.status).toBe(403);
     expectLeakFreeBody(res.body, target);
   });
 
-  it('UMAC-05 Test 3 — non-existent target, valid active caller → leak-free 404 (already-green characterization)', async () => {
+  it('UMAC-05 Test 3 — non-existent target, valid active caller → 403 denial (no existence distinction)', async () => {
     const caller = await fx.user('umac05-caller', { firstName: 'Caller' });
     // A well-formed id that resolves to no `User` row.
     const missingTargetId = '01890000-0000-7000-8000-0000000000ff';
@@ -114,7 +121,11 @@ describe('UMAC-1 Stage 2 (red) — GET /users/:id empty-audience denial is a lea
       .get(`/users/${missingTargetId}`)
       .set('authorization', bearer(caller.id));
 
-    expect(res.status).toBe(404);
+    // `resolveAudiences(V, [<missing>])` returns an empty `Set` (target is not
+    // an active `User`) → the guard denies → `403`. A forbidden target and a
+    // missing one get the identical response — there is no `404` branch on this
+    // route.
+    expect(res.status).toBe(403);
     expectLeakFreeBody(res.body);
   });
 });

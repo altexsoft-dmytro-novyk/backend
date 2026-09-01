@@ -305,6 +305,31 @@ export function expectExactS1Card(
   );
 }
 
+/**
+ * Assert the `GET /users/:id` success body is EXACTLY the read envelope
+ * `{ data, canEdit }` (CAP-3): `body.data` deep-equals the S1 identity card,
+ * `body.canEdit === expectedCanEdit`, `Object.keys(body)` is exactly
+ * `['canEdit','data']`, and every `NON_S1_FIELDS` technical field is absent
+ * from `body.data`.
+ *
+ * Committed-red today: the interim adapter leaves `findOne` on the whole-row
+ * `toUserResponse`, so the body is the bare `User` row — not enveloped, with
+ * `data` / `canEdit` undefined and the technical fields present. Goes green
+ * when `UMAC-1-production` ships the S1-card DTO + envelope.
+ */
+export function expectExactS1CardEnvelope(
+  body: unknown,
+  expectedCard: Record<string, unknown>,
+  expectedCanEdit: boolean,
+): void {
+  const b = (body ?? {}) as Record<string, unknown>;
+  expect(Object.keys(b).sort()).toEqual(['canEdit', 'data']);
+  expect(b.canEdit).toBe(expectedCanEdit);
+  // Reuse: deep-equal + exact key set + NON_S1 fields absent, on the envelope's
+  // `data` member.
+  expectExactS1Card(b.data, expectedCard);
+}
+
 /** The exact S1 card a seeded `User` row must project to on `GET /users/:id`. */
 export function s1CardOf(user: User): Record<string, unknown> {
   return {

@@ -4,7 +4,7 @@ import {
   RunFixtures,
   bearer,
   bootstrapTestApp,
-  expectExactS1Card,
+  expectExactS1CardEnvelope,
   s1CardOf,
 } from './fixtures';
 
@@ -20,15 +20,29 @@ import {
  *     umac-04-colleague-read-s1-card.md
  *
  * WHY RED (per test): every test here is
- * **red-because-not-implemented (S1-card narrowing)**. The `200` status and the
- * S1 field VALUES already pass under the interim adapter
- * (`isAllowedForTarget` returns `Boolean(userId)`), but `toUserResponse`
- * currently spreads the whole `User` row, so the body still carries
- * `ttId` / `isActive` / `customFields` / `createdAt` / `createdBy`. The
- * `expectExactS1Card` assertion (`toEqual` the exact card + `not.toHaveProperty`
- * on each technical field + exact key set) therefore FAILS until
- * `UMAC-1-production` ships the S1-card DTO and rebinds `ACCESS_CONTROL_PORT`
- * to the real `AccessControlFacade`-backed adapter.
+ * **red-because-not-implemented (S1-card envelope + narrowing)**. The `200`
+ * status already passes under the interim adapter (`isAllowedForTarget` returns
+ * `Boolean(userId)`), but `findOne` still serializes through the whole-row
+ * `toUserResponse`, so the body is the bare `User` row — NOT the
+ * `{ data, canEdit }` envelope the approved `umac-01..04` scenarios require.
+ * `expectExactS1CardEnvelope` therefore fails on two counts at once:
+ *   1. `Object.keys(body)` is the ~17 `User` columns, not `['canEdit','data']`;
+ *      `body.data` and `body.canEdit` are `undefined`.
+ *   2. even reading through to the (absent) `data`, the row still carries
+ *      `ttId` / `isActive` / `customFields` / `createdAt` / `createdBy`.
+ * Goes green only when `UMAC-1-production` ships the S1-card DTO wrapped in the
+ * read envelope and rebinds `ACCESS_CONTROL_PORT` to the real
+ * `AccessControlFacade`-backed adapter.
+ *
+ * `canEdit` is `false` for all four reads today — for two different reasons
+ * (both asserted as `false` here):
+ *   - self / reporting / pp: `canAccessSection(V,'S1',T) === 'write'`, but
+ *     `user-management:edit` is unseeded (Open Decision (i) = option (a),
+ *     pending) so `isAllowed` fails closed. These flip to `canEdit: true` once
+ *     the UMAC-2 kernel-seed sequence for `user-management:edit` reaches
+ *     `stage-3-production`.
+ *   - colleague (UMAC-04): `canAccessSection(V,'S1',T) === 'read'`, so `canEdit`
+ *     is `false` regardless of any permission and never flips.
  *
  * AD-3: real `AppModule`, real Prisma / migrated PostgreSQL, no provider
  * overrides. Fixtures seed real `User` + `Relationship` rows and issue
@@ -71,7 +85,10 @@ describe('UMAC-1 Stage 2 (red) — GET /users/:id returns the S1 identity card (
     const res = await getUser(viewer.id, viewer.id);
 
     expect(res.status).toBe(200);
-    expectExactS1Card(res.body, s1CardOf(viewer));
+    // Self: `canAccessSection` → 'write', but `user-management:edit` is unseeded
+    // → `canEdit` false today; flips to true after the UMAC-2 kernel-seed
+    // sequence for `user-management:edit`.
+    expectExactS1CardEnvelope(res.body, s1CardOf(viewer), false);
   });
 
   // docs/test-cases/user-management/access-control-adoption/umac-02-reporting-line-viewer-read.md
@@ -85,7 +102,10 @@ describe('UMAC-1 Stage 2 (red) — GET /users/:id returns the S1 identity card (
       const res = await getUser(target.id, viewer.id);
 
       expect(res.status).toBe(200);
-      expectExactS1Card(res.body, s1CardOf(target));
+      // Reporting-line viewer: `canAccessSection` → 'write', `user-management:edit`
+      // unseeded → `canEdit` false today; flips to true after the UMAC-2
+      // kernel-seed sequence.
+      expectExactS1CardEnvelope(res.body, s1CardOf(target), false);
     });
 
     it('UMAC-02 Test 2 — transitive reporting line (T → M → V)', async () => {
@@ -101,7 +121,9 @@ describe('UMAC-1 Stage 2 (red) — GET /users/:id returns the S1 identity card (
       const res = await getUser(target.id, viewer.id);
 
       expect(res.status).toBe(200);
-      expectExactS1Card(res.body, s1CardOf(target));
+      // Same as Test 1 — `canEdit` false today, flips to true after the UMAC-2
+      // kernel-seed sequence for `user-management:edit`.
+      expectExactS1CardEnvelope(res.body, s1CardOf(target), false);
     });
   });
 
@@ -115,7 +137,10 @@ describe('UMAC-1 Stage 2 (red) — GET /users/:id returns the S1 identity card (
     const res = await getUser(target.id, viewer.id);
 
     expect(res.status).toBe(200);
-    expectExactS1Card(res.body, s1CardOf(target));
+    // Assigned PP: `canAccessSection` → 'write', `user-management:edit` unseeded
+    // → `canEdit` false today; flips to true after the UMAC-2 kernel-seed
+    // sequence.
+    expectExactS1CardEnvelope(res.body, s1CardOf(target), false);
   });
 
   // docs/test-cases/user-management/access-control-adoption/umac-04-colleague-read-s1-card.md
@@ -136,6 +161,9 @@ describe('UMAC-1 Stage 2 (red) — GET /users/:id returns the S1 identity card (
     const res = await getUser(target.id, viewer.id);
 
     expect(res.status).toBe(200);
-    expectExactS1Card(res.body, s1CardOf(target));
+    // Colleague: `canAccessSection(V,'S1',T)` → 'read', so `canEdit` is false
+    // regardless of any functional permission and NEVER flips to true (unlike
+    // self / reporting / pp above).
+    expectExactS1CardEnvelope(res.body, s1CardOf(target), false);
   });
 });
