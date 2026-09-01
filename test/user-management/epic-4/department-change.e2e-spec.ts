@@ -153,7 +153,7 @@ describe('Epic 4 · Story 4.3 — Change Employee Department / Department Manage
   });
 
   // um-rel-14 -----------------------------------------------------------
-  it('um-rel-14 · Root making itself Dept B\'s manager is rejected, no access change, no journal (§3.3)', async () => {
+  it("um-rel-14 · Root making itself Dept B's manager is rejected, no access change, no journal (§3.3)", async () => {
     const root = await seedActor('rel14-root');
     const deptBId = uuidv7();
 

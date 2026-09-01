@@ -68,9 +68,21 @@ const itemsOf = (body: unknown): Array<Record<string, unknown>> => {
 describe('Epic 1 · Employee list — GET /users (e2e)', () => {
   let testApp: TestApp;
   let fx: RunFixtures;
+  // Holds the seeded root + its FR grant chain for the whole suite.
+  let rootFx: RunFixtures;
 
   beforeAll(async () => {
     testApp = await bootstrapTestApp();
+    // `bearer('Root')` resolves through `InterimSessionResolverAdapter` to
+    // whichever real `HR Admin` row exists (preferring the most recent). Under
+    // the real `AccessControlFacade` (UMAC-1 rebind) a bare `position` string no
+    // longer grants `user-management:list` — only a live FR grant chain does.
+    // Seed that chain for a fresh HR-Admin row so `GET /users` stays authorized
+    // for the `um-list-*` characterization tests (mirrors
+    // `access-control-adoption/no-target-permission.e2e-spec.ts` Test 1).
+    rootFx = new RunFixtures(testApp.prisma);
+    const root = await rootFx.user('list-v15-root', { position: 'HR Admin' });
+    await rootFx.grantFunctionalRole(root.id);
   });
 
   beforeEach(() => {
@@ -92,6 +104,7 @@ describe('Epic 1 · Employee list — GET /users (e2e)', () => {
     } catch (error) {
       console.warn('[list-v15] interim-root sweep failed', error);
     }
+    await rootFx.cleanup();
     await testApp.app.close();
     await testApp.moduleFixture.close();
   });

@@ -18,7 +18,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { DeactivateUserAction } from '../actions/deactivate-user.action';
 import { EditUserAction } from '../actions/edit-user.action';
-import { GetUserAction } from '../actions/get-user.action';
+import { GetUserCardAction } from '../actions/get-user-card.action';
 import { ListUsersAction } from '../actions/list-users.action';
 import { RegisterUserAction } from '../actions/register-user.action';
 import { UploadUserPhotoAction } from '../actions/upload-user-photo.action';
@@ -31,6 +31,7 @@ import { CreateUserDto } from '../dtos/create-user.dto';
 import { ListUsersQueryDto } from '../dtos/list-users-query.dto';
 import { UpdateUserDto } from '../dtos/update-user.dto';
 import { toUserResponse, type UserResponse } from '../dtos/user.response';
+import type { UserCardResponse } from '../dtos/user-card.response';
 import { AccessControlGuard } from '../guards/access-control.guard';
 import { SessionGuard } from '../guards/session.guard';
 import type { Session } from '../../domain/interfaces/session-resolver.port';
@@ -49,7 +50,7 @@ export class UsersController {
   constructor(
     private readonly registerUserAction: RegisterUserAction,
     private readonly editUserAction: EditUserAction,
-    private readonly getUserAction: GetUserAction,
+    private readonly getUserCardAction: GetUserCardAction,
     private readonly uploadUserPhotoAction: UploadUserPhotoAction,
     private readonly deactivateUserAction: DeactivateUserAction,
     private readonly listUsersAction: ListUsersAction,
@@ -80,8 +81,11 @@ export class UsersController {
 
   @Get(':id')
   @RequireFeatureForTarget(READ_USER_FEATURE)
-  async findOne(@Param('id') id: string) {
-    return toUserResponse(await this.getUserAction.execute(id));
+  async findOne(
+    @CurrentSession() session: Session,
+    @Param('id') id: string,
+  ): Promise<UserCardResponse> {
+    return this.getUserCardAction.execute(session.userId, id);
   }
 
   @Patch(':id')

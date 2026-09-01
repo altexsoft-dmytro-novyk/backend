@@ -94,9 +94,9 @@ describe('Mentorship pair create (men-pair-*) — Stage-2 committed red [G-CTX +
 
     const list = await A.listPairs(bob.id);
     expect(list.status).toBe(200);
-    expect(
-      pairsOf(list.body).some((p) => p.menteeUserId === eve.id),
-    ).toBe(false);
+    expect(pairsOf(list.body).some((p) => p.menteeUserId === eve.id)).toBe(
+      false,
+    );
   });
 
   it('men-pair-03 — first active pair flips status `open to mentoring` → `mentor`', async () => {
