@@ -18,14 +18,15 @@ import {
 // router, session resolver, or the AccessControl facade.
 //
 // THE ONE ALLOWED OVERRIDE (HARD RULE 2 / AD-15): the outbound magic-link email
-// dispatcher (`MAGIC_LINK_DISPATCHER_PORT`). The production binding
-// (`MagicLinkDispatcherFake`) is already an AD-15 external-integration fake, but
-// it only writes a log line — it records nothing a test can read. `um-auth-02`
-// and `um-auth-06` must assert **zero** dispatch and `um-auth-01` must assert
-// **exactly one** dispatch to a specific address (DEC-UM-004), and there is no
-// other seam that exposes what the dispatcher was asked to send. So this is the
-// documented AD-15 fake seam: we rebind the same outbound port to a
-// recording variant of the same fake. Nothing else is overridden.
+// dispatcher (`MAGIC_LINK_DISPATCHER_PORT`). The production binding is the real
+// `SmtpMagicLinkDispatcherAdapter` (nodemailer / SMTP) — it sends a real email
+// and records nothing a test can read, and an E2E must not depend on a live
+// SMTP transport. `um-auth-02` / `um-auth-06` must assert **zero** dispatch,
+// `um-auth-01` **exactly one** to a specific address (DEC-UM-004), and the
+// consume suite needs the raw token, and there is no other seam that exposes
+// what the dispatcher was asked to send. So this is the documented AD-15 fake
+// seam: we rebind the outbound port to a recording fake. Nothing else is
+// overridden.
 //
 // DEC-UM-010 gate isolation: one worker (`--runInBand`), a collision-proof UUID
 // namespace per run (`RunFixtures.runId`), each test deletes only rows it
@@ -41,10 +42,11 @@ export {
 } from '../epic-1/fixtures';
 
 /**
- * Recording variant of the production `MagicLinkDispatcherFake` (AD-15 outbound
- * fake). Same port, same no-op delivery — it just remembers every address it
- * was asked to dispatch to, so the enumeration-safety / single-dispatch
- * assertions (DEC-UM-004, DEC-UM-012) have something to read.
+ * Recording fake for the outbound `MAGIC_LINK_DISPATCHER_PORT` (AD-15 seam),
+ * standing in for the real `SmtpMagicLinkDispatcherAdapter` in E2E. No-op
+ * delivery — it just remembers every `{ workEmail, token }` it was asked to
+ * dispatch, so the enumeration-safety / single-dispatch assertions
+ * (DEC-UM-004, DEC-UM-012) and the consume suite have something to read.
  */
 export class RecordingMagicLinkDispatcher implements MagicLinkDispatcherPort {
   /** Every `workEmail` passed to `dispatch`, in call order. */
