@@ -20,8 +20,9 @@ import type { IdentityCardAccessPort } from '../domain/interfaces/identity-card-
 // target is entitled to the S1 identity card (§3.2). An empty audience — which
 // on this route means the target is not an active `User` — denies (guard → 403).
 const READ_USER_FEATURE = 'user-management:read';
-// The functional permission half of the §2.2 write dual gate. Unseeded today
-// (Open Decision (i) = option (a), pending) → `isAllowed` fails closed.
+// The `PATCH /users/:id` gate. Variant A (product decision 2026-09-02): no
+// separate functional permission — the whole gate is `canAccessSection('S1')
+// === 'write'` (reporting-line manager or assigned People Partner).
 const EDIT_USER_FEATURE = 'user-management:edit';
 // The identity-card section string the kernel supports for S1 (ACM-5).
 const S1_SECTION = 'S1';
@@ -52,20 +53,42 @@ export class AccessControlFacadeAdapter
       return set !== undefined && set.size > 0;
     }
 
-    // Write-path target features (PATCH / PUT photo) are UMAC-2; their §2.2
-    // dual gate is not wired on this route yet. Fail closed.
+    if (feature === EDIT_USER_FEATURE) {
+      // Variant A: identity-card edit is gated by S1 write-access alone — the
+      // reporting-line manager or the assigned People Partner. No functional
+      // permission layer on this section (§2.2's functional half is not applied
+      // here; a narrower FR grant can be introduced later via the roles admin).
+      const sectionAccess = await this.facade.canAccessSection(
+        userId,
+        S1_SECTION,
+        targetUserId,
+      );
+      return sectionAccess === 'write';
+    }
+
+    // PUT /users/:id/photo is Self-only and gated by SelfOnlyGuard, not here.
+    // Any other write-path target feature is fail-closed until wired.
     return false;
   }
 
-  // §2.2 dual gate, read-only, for the `canEdit` UI hint on `GET /users/:id`.
+  // The `canEdit` hint on `GET /users/:id`, and the gate on `PATCH /users/:id`.
+  //
+  // Product decision 2026-09-02 (Variant A — the identity card has no separate
+  // functional permission; audience write-access is the whole gate): the
+  // manager on this person's reporting line, or their assigned People Partner,
+  // may edit the identity card. That is exactly `canAccessSection('S1') ===
+  // 'write'`. §2.2's functional half is not applied to this section — HR Admin
+  // can introduce a narrower FR grant later through the roles admin screen if
+  // finer control is ever needed.
   async canEditIdentityCard(
     viewerId: string,
     targetUserId: string,
   ): Promise<boolean> {
-    const [hasEditPermission, sectionAccess] = await Promise.all([
-      this.facade.isAllowed(viewerId, EDIT_USER_FEATURE),
-      this.facade.canAccessSection(viewerId, S1_SECTION, targetUserId),
-    ]);
-    return hasEditPermission && sectionAccess === 'write';
+    const sectionAccess = await this.facade.canAccessSection(
+      viewerId,
+      S1_SECTION,
+      targetUserId,
+    );
+    return sectionAccess === 'write';
   }
 }

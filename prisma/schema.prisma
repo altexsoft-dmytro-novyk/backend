@@ -52,7 +52,31 @@ model User {
   events                UserEvent[]           @relation("UserEventSubject")
   authoredEvents        UserEvent[]           @relation("UserEventAuthor")
 
+  // Epic 2 Story 2.1 — magic-link authentication. Back-relation only.
+  magicLinkTokens MagicLinkToken[]
+
   @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// Epic 2 Story 2.1 — Magic-Link Authentication (auth sub-area of user-management,
+// database-schema.md §MagicLinkToken).
+//
+// `tokenHash` (SHA-256 hex of the raw token) is a deliberate hardening over
+// `epic-2-context.md`'s `token`-unique draft: the DB never stores the usable
+// secret — the raw token exists only inside the emailed link. Flagged for
+// architect ratification in database-schema.md.
+// ---------------------------------------------------------------------------
+model MagicLinkToken {
+  id         String    @id @default(uuid(7))
+  userId     String
+  tokenHash  String    @unique // SHA-256 hex of the raw token; the raw token is only ever in the emailed link
+  expiresAt  DateTime  @db.Timestamptz
+  consumedAt DateTime? @db.Timestamptz
+  createdAt  DateTime  @default(now()) @db.Timestamptz
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("magic_link_token")
 }
 
 // ---------------------------------------------------------------------------

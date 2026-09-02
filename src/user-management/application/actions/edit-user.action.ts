@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import type { User } from '../../../generated/prisma/client';
 import type { UserEditPatch } from '../../domain/interfaces/user.repository.port';
 import { UserService } from '../../domain/services/user.service';
@@ -12,6 +16,21 @@ export class EditUserAction {
     const existing = await this.userService.findById(id);
     if (!existing) {
       throw new NotFoundException();
+    }
+
+    // birthDay / birthMonth are "both null together or both set together"
+    // (database-schema.md §User). The DTO can't enforce this — it can't see the
+    // current row. Compute the RESULTING pair (current value unless the PATCH
+    // supplies the key; `null` if the PATCH sets it to `null`) and reject a
+    // half-set outcome. Mirrors the import writer's rule (Story 1.1).
+    const resultingBirthDay =
+      dto.birthDay !== undefined ? dto.birthDay : existing.birthDay;
+    const resultingBirthMonth =
+      dto.birthMonth !== undefined ? dto.birthMonth : existing.birthMonth;
+    if ((resultingBirthDay == null) !== (resultingBirthMonth == null)) {
+      throw new BadRequestException(
+        'birthDay and birthMonth must both be set or both be null',
+      );
     }
 
     const patch: UserEditPatch = {};

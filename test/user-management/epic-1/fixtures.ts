@@ -8,7 +8,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../../src/generated/prisma/client';
 
 // Shared helpers for the Epic 1 — Employee Record Management Stage-2 E2E
-// suites (seed / profile-v15 / list-v15), v1.5.
+// suites (seed / edit-identity / photo-v15 / list-v15), v1.5.
 //
 // The app-booting parts (`bootstrapTestApp`, `RunFixtures`, `bearer`) are the
 // Epic 0 adoption fixtures, reused verbatim — they already give AD-3-clean boot
