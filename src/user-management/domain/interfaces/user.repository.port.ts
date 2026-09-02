@@ -1,4 +1,4 @@
-import type { User } from '../../../generated/prisma/client';
+import type { EmploymentStatus, User } from '../../../generated/prisma/client';
 import type { UserEntity } from '../entities/user.entity';
 
 export type UserEditPatch = Partial<Omit<UserEntity, 'customFields'>>;
@@ -16,12 +16,17 @@ export type UserListFilter = Partial<
     | 'birthDay'
     | 'birthMonth'
     | 'companyJoinDate'
-    | 'ttId'
   >
-> & { isActive?: boolean };
+> & { employmentStatus?: 'active' | 'dismissed' };
+
+// A list row: the `User` plus its current (`validTo IS NULL`) employment-status
+// fact, if any. A user with no current row is treated as `active` (README §6).
+export type UserListRow = User & {
+  employmentStatuses: Array<Pick<EmploymentStatus, 'status'>>;
+};
 
 export interface UserListPage {
-  items: User[];
+  items: UserListRow[];
   total: number;
   page: number;
   pageSize: number;

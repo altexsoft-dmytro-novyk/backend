@@ -17,7 +17,9 @@ export interface S1IdentityCard {
   photo: string | null;
   position: string;
   country: string;
-  city: string;
+  // Nullable since Story 1.1 — the seeded-population import has no source column
+  // for city and stores it null.
+  city: string | null;
   workEmail: string;
   workPhone: string | null;
   birthDay: number | null;

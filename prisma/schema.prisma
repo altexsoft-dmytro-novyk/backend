@@ -16,7 +16,9 @@ model User {
   photo           String?
   position        String
   country         String
-  city            String
+  // Nullable: the seeded-population import (Story 1.1) has no source column for
+  // city (decisions §5) and stores it null; request-level writers still set it.
+  city            String?
   workEmail       String    @unique
   workPhone       String?
   birthDay        Int?      // 1-31. No year captured/stored, for any audience (§3.2 S1: "birthday (day and month)")
@@ -42,7 +44,100 @@ model User {
   userPolicies      UserPolicy[]
   bootstrapRootOf   AccessControlBootstrap?
 
+  // Story 1.1 seeded-population import. Back-relations only: Prisma requires
+  // them for the foreign keys below. Department is derived, never a column here
+  // (AD-11) — it reads through DepartmentMembership.
+  departmentMemberships DepartmentMembership[]
+  employmentStatuses    EmploymentStatus[]
+  events                UserEvent[]           @relation("UserEventSubject")
+  authoredEvents        UserEvent[]           @relation("UserEventAuthor")
+
   @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// Story 1.1 — seeded-population import (AD-16, database-schema.md §Project/
+// Department, §EmploymentStatus, §UserEvents).
+//
+// Prisma cannot express the partial unique indexes
+// (`department_membership (userId, departmentId) WHERE validTo IS NULL`,
+// `employment_status (userId) WHERE validTo IS NULL`) or the relaxed
+// `employment_status` CHECK — those live in reviewed raw SQL in the migration.
+// Read the migration alongside these models.
+// ---------------------------------------------------------------------------
+
+// A first-class nested org entity. Created on import when no row with the same
+// (externalId, name) pair exists; `externalId` alone is NOT unique. `parentId`
+// is null on import — hierarchy is assigned later (no CSV source column).
+model Department {
+  id         String  @id @default(uuid(7))
+  name       String
+  externalId String? // timetracker DepartmentId, stored as a string; NOT unique on its own
+  parentId   String?
+
+  parent      Department?            @relation("DeptTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children    Department[]           @relation("DeptTree")
+  memberships DepartmentMembership[]
+
+  @@unique([externalId, name])
+  @@map("department")
+}
+
+model DepartmentMembership {
+  id           String    @id @default(uuid(7))
+  userId       String
+  departmentId String
+  validFrom    DateTime  @db.Date
+  validTo      DateTime? @db.Date
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department Department  @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([departmentId])
+  // UNIQUE (userId, departmentId) WHERE validTo IS NULL — raw SQL in the migration.
+  @@map("department_membership")
+}
+
+// Temporal S4 employment fact (AD-16) — never `User.isActive`. An import-origin
+// `dismissed` row has no `Departure`: the CHECK no longer requires
+// `sourceDepartureId` / `departureReason` (database-schema.md §EmploymentStatus,
+// "Import-origin dismissals (2026-09-02)").
+model EmploymentStatus {
+  id                String    @id @default(uuid(7))
+  userId            String
+  status            String // 'active' | 'dismissed'
+  validFrom         DateTime  @db.Date
+  validTo           DateTime? @db.Date
+  departureReason   String?
+  // Plain nullable column for now — the FK to `Departure` lands with AD-20 / Epic 5.
+  sourceDepartureId String?   @unique
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  // UNIQUE (userId) WHERE validTo IS NULL + the relaxed status CHECK — raw SQL in the migration.
+  @@map("employment_status")
+}
+
+// The §4.9 career-timeline log (database-schema.md §UserEvents). Immutable
+// facts: no updatedAt/updatedBy; a wrong entry is soft-deleted and superseded.
+model UserEvent {
+  id        String    @id @default(uuid(7))
+  userId    String
+  type      String // 'joined_company' | 'position_change' | 'department_change' | ...
+  eventDate DateTime  @db.Date
+  details   Json      @default("{}")
+  source    String // 'system' | 'manual'
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  createdBy String
+
+  user    User @relation("UserEventSubject", fields: [userId], references: [id], onDelete: Cascade)
+  creator User @relation("UserEventAuthor", fields: [createdBy], references: [id], onDelete: Restrict)
+
+  @@index([userId, type])
+  @@map("user_events")
 }
 
 
