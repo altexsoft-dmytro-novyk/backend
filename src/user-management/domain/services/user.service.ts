@@ -8,6 +8,7 @@ import {
   type UserListPage,
   type UserRepositoryPort,
 } from '../interfaces/user.repository.port';
+import type { SystemEventInput } from '../interfaces/user-event.repository.port';
 
 // The only holder of this context's repository/dispatcher ports (AD-2) —
 // application/actions/ depend on this service, never on a port token
@@ -33,8 +34,12 @@ export class UserService {
     return this.userRepository.create(props, createdBy);
   }
 
-  update(id: string, patch: UserEditPatch): Promise<User> {
-    return this.userRepository.update(id, patch);
+  update(
+    id: string,
+    patch: UserEditPatch,
+    systemEvents?: SystemEventInput[],
+  ): Promise<User> {
+    return this.userRepository.update(id, patch, systemEvents);
   }
 
   deactivate(id: string): Promise<User> {

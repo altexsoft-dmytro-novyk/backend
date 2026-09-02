@@ -2,7 +2,9 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ACCESS_CONTROL_PORT } from './domain/interfaces/access-control.port';
 import { AUTH_USER_LOOKUP_PORT } from './domain/interfaces/auth-user-lookup.port';
+import { CAREER_TIMELINE_ACCESS_PORT } from './domain/interfaces/career-timeline-access.port';
 import { IDENTITY_CARD_ACCESS_PORT } from './domain/interfaces/identity-card-access.port';
+import { USER_EVENT_REPOSITORY_PORT } from './domain/interfaces/user-event.repository.port';
 import { MAGIC_LINK_DISPATCHER_PORT } from './domain/interfaces/magic-link-dispatcher.port';
 import { MAGIC_LINK_TOKEN_REPOSITORY_PORT } from './domain/interfaces/magic-link-token.repository.port';
 import { MAGIC_LINK_TTL_MINUTES } from './domain/interfaces/magic-link-ttl.token';
@@ -15,6 +17,7 @@ import { UsersController } from './application/controllers/users.controller';
 import { DeactivateUserAction } from './application/actions/deactivate-user.action';
 import { EditUserAction } from './application/actions/edit-user.action';
 import { GetUserCardAction } from './application/actions/get-user-card.action';
+import { GetUserEventsAction } from './application/actions/get-user-events.action';
 import { ImportPopulationAction } from './application/actions/import-population.action';
 import { ListUsersAction } from './application/actions/list-users.action';
 import { ConsumeMagicLinkAction } from './application/actions/consume-magic-link.action';
@@ -23,12 +26,16 @@ import { UploadUserPhotoAction } from './application/actions/upload-user-photo.a
 import { AccessControlGuard } from './application/guards/access-control.guard';
 import { SelfOnlyGuard } from './application/guards/self-only.guard';
 import { SessionGuard } from './application/guards/session.guard';
+import { CareerTimelineAccessService } from './domain/services/career-timeline-access.service';
+import { CareerTimelineService } from './domain/services/career-timeline.service';
 import { IdentityCardAccessService } from './domain/services/identity-card-access.service';
 import { MagicLinkService } from './domain/services/magic-link.service';
 import { PopulationImportService } from './domain/services/population-import.service';
 import { UserService } from './domain/services/user.service';
 import { AccessControlFacadeAdapter } from './infrastructure/access-control-facade.adapter';
 import { AuthUserLookupRepository } from './infrastructure/auth-user-lookup.repository';
+import { CareerTimelineAccessFacadeAdapter } from './infrastructure/career-timeline-access-facade.adapter';
+import { UserEventRepository } from './infrastructure/user-event.repository';
 import { JwtSessionResolverAdapter } from './infrastructure/jwt-session-resolver.adapter';
 import { JwtSessionTokenIssuerAdapter } from './infrastructure/jwt-session-token-issuer.adapter';
 import { MagicLinkTokenRepository } from './infrastructure/magic-link-token.repository';
@@ -45,6 +52,7 @@ import { UserRepository } from './infrastructure/user.repository';
     DeactivateUserAction,
     ListUsersAction,
     ImportPopulationAction,
+    GetUserEventsAction,
     RequestMagicLinkAction,
     ConsumeMagicLinkAction,
     SessionGuard,
@@ -52,10 +60,17 @@ import { UserRepository } from './infrastructure/user.repository';
     SelfOnlyGuard,
     UserService,
     IdentityCardAccessService,
+    CareerTimelineService,
+    CareerTimelineAccessService,
     PopulationImportService,
     MagicLinkService,
     AccessControlFacadeAdapter,
     { provide: USER_REPOSITORY_PORT, useClass: UserRepository },
+    { provide: USER_EVENT_REPOSITORY_PORT, useClass: UserEventRepository },
+    {
+      provide: CAREER_TIMELINE_ACCESS_PORT,
+      useClass: CareerTimelineAccessFacadeAdapter,
+    },
     {
       provide: POPULATION_IMPORT_REPOSITORY_PORT,
       useClass: PopulationImportRepository,

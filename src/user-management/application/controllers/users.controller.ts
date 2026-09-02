@@ -21,6 +21,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { DeactivateUserAction } from '../actions/deactivate-user.action';
 import { EditUserAction } from '../actions/edit-user.action';
 import { GetUserCardAction } from '../actions/get-user-card.action';
+import { GetUserEventsAction } from '../actions/get-user-events.action';
 import { ImportPopulationAction } from '../actions/import-population.action';
 import { ListUsersAction } from '../actions/list-users.action';
 import { UploadUserPhotoAction } from '../actions/upload-user-photo.action';
@@ -38,6 +39,7 @@ import {
   type UserListItem,
 } from '../dtos/user-list-item.response';
 import type { UserCardResponse } from '../dtos/user-card.response';
+import type { UserEventsEnvelope } from '../dtos/user-event.response';
 import { AccessControlGuard } from '../guards/access-control.guard';
 import { SelfOnlyGuard } from '../guards/self-only.guard';
 import { SessionGuard } from '../guards/session.guard';
@@ -86,6 +88,7 @@ export class UsersController {
     private readonly deactivateUserAction: DeactivateUserAction,
     private readonly listUsersAction: ListUsersAction,
     private readonly importPopulationAction: ImportPopulationAction,
+    private readonly getUserEventsAction: GetUserEventsAction,
   ) {}
 
   @Get()
@@ -145,10 +148,29 @@ export class UsersController {
     return this.getUserCardAction.execute(session.userId, id);
   }
 
+  // Distinct path from `:id` (`:id/events` never collides with `:id`); declared
+  // beside the other `:id` routes. Read gate is INSIDE the action — the
+  // career-timeline S9 read audience excludes colleague, so it is NOT
+  // `@RequireFeatureForTarget` (that is the S1 audience). `SessionGuard`
+  // produces the `401` for a missing/invalid token.
+  @Get(':id/events')
+  async findEvents(
+    @CurrentSession() session: Session,
+    @Param('id') id: string,
+  ): Promise<UserEventsEnvelope> {
+    return this.getUserEventsAction.execute(session.userId, id);
+  }
+
   @Patch(':id')
   @RequireFeatureForTarget(EDIT_USER_FEATURE)
-  async update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
-    return toUserResponse(await this.editUserAction.execute(id, dto));
+  async update(
+    @CurrentSession() session: Session,
+    @Param('id') id: string,
+    @Body() dto: UpdateUserDto,
+  ) {
+    return toUserResponse(
+      await this.editUserAction.execute(id, dto, session.userId),
+    );
   }
 
   // Self-only by identity (FR-9 / Open Decision vi) — NOT a functional

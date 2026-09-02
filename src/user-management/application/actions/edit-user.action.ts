@@ -5,14 +5,23 @@ import {
 } from '@nestjs/common';
 import type { User } from '../../../generated/prisma/client';
 import type { UserEditPatch } from '../../domain/interfaces/user.repository.port';
+import type { SystemEventInput } from '../../domain/interfaces/user-event.repository.port';
+import { CareerTimelineService } from '../../domain/services/career-timeline.service';
 import { UserService } from '../../domain/services/user.service';
 import type { UpdateUserDto } from '../dtos/update-user.dto';
 
 @Injectable()
 export class EditUserAction {
-  constructor(private readonly userService: UserService) {}
+  constructor(
+    private readonly userService: UserService,
+    private readonly careerTimeline: CareerTimelineService,
+  ) {}
 
-  async execute(id: string, dto: UpdateUserDto): Promise<User> {
+  async execute(
+    id: string,
+    dto: UpdateUserDto,
+    viewerId: string,
+  ): Promise<User> {
     const existing = await this.userService.findById(id);
     if (!existing) {
       throw new NotFoundException();
@@ -48,6 +57,16 @@ export class EditUserAction {
     }
     if (dto.ttId !== undefined) patch.ttId = dto.ttId;
 
-    return this.userService.update(id, patch);
+    // AD-11: a real `position` change writes one `position_change` system event
+    // in the SAME transaction as the `user.update`. Absent key or unchanged
+    // value → no event (um-ct-02 Test 2).
+    const systemEvents: SystemEventInput[] = [];
+    if (dto.position !== undefined && dto.position !== existing.position) {
+      systemEvents.push(
+        this.careerTimeline.positionChangeEvent(id, dto.position, viewerId),
+      );
+    }
+
+    return this.userService.update(id, patch, systemEvents);
   }
 }

@@ -9,6 +9,7 @@ import type {
   UserListPage,
   UserRepositoryPort,
 } from '../domain/interfaces/user.repository.port';
+import type { SystemEventInput } from '../domain/interfaces/user-event.repository.port';
 
 @Injectable()
 export class UserRepository implements UserRepositoryPort {
@@ -45,9 +46,33 @@ export class UserRepository implements UserRepositoryPort {
     return this.prisma.user.findUnique({ where: { id } });
   }
 
-  async update(id: string, patch: UserEditPatch): Promise<User> {
+  async update(
+    id: string,
+    patch: UserEditPatch,
+    systemEvents: SystemEventInput[] = [],
+  ): Promise<User> {
     try {
-      return await this.prisma.user.update({ where: { id }, data: patch });
+      if (systemEvents.length === 0) {
+        return await this.prisma.user.update({ where: { id }, data: patch });
+      }
+      // AD-11: the user update and its triggered auto-events commit together or
+      // not at all.
+      return await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.user.update({ where: { id }, data: patch });
+        for (const event of systemEvents) {
+          await tx.userEvent.create({
+            data: {
+              userId: event.userId,
+              type: event.type,
+              eventDate: event.eventDate,
+              details: event.details as Prisma.InputJsonValue,
+              source: event.source,
+              createdBy: event.createdBy,
+            },
+          });
+        }
+        return updated;
+      });
     } catch (error) {
       throw this.mapKnownError(error);
     }
