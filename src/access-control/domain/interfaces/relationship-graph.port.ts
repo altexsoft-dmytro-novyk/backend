@@ -5,7 +5,7 @@
  * a concurrent org change.
  */
 export type AudienceFacts = {
-  /** Targets reachable from the viewer down the recursive `direct` chain. */
+  /** Targets whose `direct` chain ascends to the viewer (walk starts at each target). */
   reportingTargets: string[];
   /** Targets whose assigned `people_partner` endpoint is the viewer. */
   ppTargets: string[];
