@@ -73,7 +73,11 @@ async function runScript(
     });
     return { exitCode: 0, output: `${stdout}\n${stderr}` };
   } catch (error: unknown) {
-    const failure = error as { code?: number; stderr?: string; stdout?: string };
+    const failure = error as {
+      code?: number;
+      stderr?: string;
+      stdout?: string;
+    };
     return {
       exitCode: typeof failure.code === 'number' ? failure.code : 1,
       output: `${failure.stdout ?? ''}\n${failure.stderr ?? ''}`,
@@ -100,7 +104,9 @@ const execSql = (query: string, ...params: unknown[]) =>
   prisma.$executeRawUnsafe(query, ...params);
 
 async function countOf(table: string): Promise<number> {
-  const [row] = await sql<{ n: bigint }>(`SELECT count(*)::bigint AS n FROM "${table}"`);
+  const [row] = await sql<{ n: bigint }>(
+    `SELECT count(*)::bigint AS n FROM "${table}"`,
+  );
   return Number(row.n);
 }
 
@@ -130,7 +136,10 @@ async function tolerantDelete(table: string): Promise<void> {
     await execSql(`DELETE FROM "${table}"`);
   } catch (error) {
     const code = (error as { code?: string }).code;
-    if (code !== '42P01' && !/does not exist/i.test(String((error as Error).message))) {
+    if (
+      code !== '42P01' &&
+      !/does not exist/i.test(String((error as Error).message))
+    ) {
       throw error;
     }
   }
@@ -237,7 +246,9 @@ async function deleteRunUsers(): Promise<void> {
   // accumulate in the shared development database. The prefix is unique to this
   // suite, so this cleans up after earlier runs without touching anyone else's
   // fixtures.
-  const users = await prisma.user.findMany({ select: { id: true, workEmail: true } });
+  const users = await prisma.user.findMany({
+    select: { id: true, workEmail: true },
+  });
   const ids = users
     .filter(({ workEmail }) => workEmail.toLowerCase().startsWith('acm1r-'))
     .map(({ id }) => id);
@@ -247,7 +258,9 @@ async function deleteRunUsers(): Promise<void> {
 }
 
 /** Establish the CAP-8 precondition: exactly one active normalized root User. */
-async function seedRoot(persona = 'root'): Promise<{ email: string; id: string }> {
+async function seedRoot(
+  persona = 'root',
+): Promise<{ email: string; id: string }> {
   const email = emailFor(persona);
   const seed = await runSeed(email);
   expect(seed.exitCode).toBe(0);
@@ -288,7 +301,9 @@ async function bootstrapSingleton() {
     normalizedRootEmail: string;
     rootUserId: string;
     policyId: string;
-  }>(`SELECT key, "normalizedRootEmail", "rootUserId", "policyId" FROM "AccessControlBootstrap"`);
+  }>(
+    `SELECT key, "normalizedRootEmail", "rootUserId", "policyId" FROM "AccessControlBootstrap"`,
+  );
   return row;
 }
 
@@ -496,9 +511,7 @@ describe('ACM1-FB-08 and ACM1R-FB-10 — Policies row shape and the partial FR r
         ),
       /duplicate key value|unique constraint/i,
     );
-    expect(
-      await countOf('Policies'),
-    ).toBe(1);
+    expect(await countOf('Policies')).toBe(1);
 
     const arId = await insertArPolicy('hr-admin');
     const arRows = await sql<{ id: string }>(
@@ -694,7 +707,9 @@ describe('ACM1R-FB-14 — AccessControlBootstrap is a constrained singleton', ()
     // unbounded family of bootstrap rows under other keys, and "no singleton
     // recorded" stops meaning "no provenance exists".
     const root = await seedRoot();
-    const other = await createFixtureUser({ workEmail: emailFor('other-admin') });
+    const other = await createFixtureUser({
+      workEmail: emailFor('other-admin'),
+    });
     expect((await runBootstrap(root.email)).exitCode).toBe(0);
     const policyId = await frPolicyId();
 
@@ -774,7 +789,9 @@ describe('ACM1R-FB-15 — ON DELETE RESTRICT on all four functional-role-side fo
     expect(await countOf('Permissions')).toBe(3);
     expect(await countOf('Policies')).toBe(1);
     expect(await countOf('AccessControlBootstrap')).toBe(1);
-    expect(await prisma.user.findUnique({ where: { id: root.id } })).toMatchObject({
+    expect(
+      await prisma.user.findUnique({ where: { id: root.id } }),
+    ).toMatchObject({
       isActive: true,
     });
   });
@@ -915,7 +932,9 @@ describe('ACM1R-FB-19 — revalidation before writes and again before commit', (
     let run: CommandRun;
     try {
       let releaseHolder: () => void = () => {};
-      const holderDone = new Promise<void>((resolve) => (releaseHolder = resolve));
+      const holderDone = new Promise<void>(
+        (resolve) => (releaseHolder = resolve),
+      );
 
       const holding = holder.$transaction(async (tx) => {
         await tx.$executeRawUnsafe(
@@ -1285,7 +1304,10 @@ describe('ACM1R-FB-26 — drift is dispositioned per field', () => {
   it('P2: preserves every generated id across a rerun', async () => {
     const root = await seedRoot();
     expect((await runBootstrap(root.email)).exitCode).toBe(0);
-    const before = { permissions: await permissionIds(), policy: await frPolicyId() };
+    const before = {
+      permissions: await permissionIds(),
+      policy: await frPolicyId(),
+    };
 
     expect((await runBootstrap(root.email)).exitCode).toBe(0);
 
@@ -1294,10 +1316,20 @@ describe('ACM1R-FB-26 — drift is dispositioned per field', () => {
   });
 
   it.each([
-    ['F1', 'operator', `UPDATE "Policies" SET operator = 'IN' WHERE type = 'FR'`, /operator/i],
-    ['F2', 'managedBy', `UPDATE "Policies" SET "managedBy" = 'sync' WHERE type = 'FR'`, /managedBy/i],
+    [
+      'F1',
+      'operator',
+      `UPDATE "Policies" SET operator = 'IN' WHERE type = 'FR'`,
+      /operator/i,
+    ],
+    [
+      'F2',
+      'managedBy',
+      `UPDATE "Policies" SET "managedBy" = 'sync' WHERE type = 'FR'`,
+      /managedBy/i,
+    ],
   ])(
-    '%s: fails before writes when the FR policy\'s %s drifts',
+    "%s: fails before writes when the FR policy's %s drifts",
     async (_case, _field, mutation, diagnostic) => {
       // Break caught: rewriting a drifted operator would let the seed change an
       // authorization predicate with no approval.
@@ -1344,7 +1376,10 @@ describe('ACM1R-FB-26 — drift is dispositioned per field', () => {
     const root = await seedRoot();
     expect((await runBootstrap(root.email)).exitCode).toBe(0);
     const other = await createFixtureUser({ workEmail: emailFor('impostor') });
-    await execSql(`UPDATE "AccessControlBootstrap" SET "rootUserId" = $1`, other);
+    await execSql(
+      `UPDATE "AccessControlBootstrap" SET "rootUserId" = $1`,
+      other,
+    );
 
     const run = await runBootstrap(root.email);
 
@@ -1381,7 +1416,9 @@ describe('ACM1R-FB-27 — a failure after writes leaves no partial state', () =>
       adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
     });
     let releaseHolder: () => void = () => {};
-    const holderDone = new Promise<void>((resolve) => (releaseHolder = resolve));
+    const holderDone = new Promise<void>(
+      (resolve) => (releaseHolder = resolve),
+    );
     const holding = holder.$transaction(
       async (tx) => {
         await tx.$executeRawUnsafe(

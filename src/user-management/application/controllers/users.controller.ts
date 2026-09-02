@@ -11,77 +11,138 @@ import {
   Post,
   Put,
   Query,
+  Req,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { DeactivateUserAction } from '../actions/deactivate-user.action';
 import { EditUserAction } from '../actions/edit-user.action';
-import { GetUserAction } from '../actions/get-user.action';
+import { GetUserCardAction } from '../actions/get-user-card.action';
+import { ImportPopulationAction } from '../actions/import-population.action';
 import { ListUsersAction } from '../actions/list-users.action';
-import { RegisterUserAction } from '../actions/register-user.action';
 import { UploadUserPhotoAction } from '../actions/upload-user-photo.action';
 import { CurrentSession } from '../decorators/current-session.decorator';
 import {
   RequireFeature,
   RequireFeatureForTarget,
 } from '../decorators/require-feature.decorator';
-import { CreateUserDto } from '../dtos/create-user.dto';
+import { SelfOnly } from '../decorators/self-only.decorator';
 import { ListUsersQueryDto } from '../dtos/list-users-query.dto';
 import { UpdateUserDto } from '../dtos/update-user.dto';
-import { toUserResponse, type UserResponse } from '../dtos/user.response';
+import { toUserResponse } from '../dtos/user.response';
+import {
+  toUserListItem,
+  type UserListItem,
+} from '../dtos/user-list-item.response';
+import type { UserCardResponse } from '../dtos/user-card.response';
 import { AccessControlGuard } from '../guards/access-control.guard';
+import { SelfOnlyGuard } from '../guards/self-only.guard';
 import { SessionGuard } from '../guards/session.guard';
 import type { Session } from '../../domain/interfaces/session-resolver.port';
 import { PaginatedResponseDto } from '../../../common/dtos/paginated-response.dto';
 
-const CREATE_USER_FEATURE = 'user-management:create';
+// The seeded-population import reuses the existing kernel permission the retired
+// `POST /users` required (AD-21 / seed README) — no new `user-management:import`
+// key. In the seeded system this key is held only by the HR-Admin root.
+const IMPORT_POPULATION_FEATURE = 'user-management:create';
 const EDIT_USER_FEATURE = 'user-management:edit';
 const READ_USER_FEATURE = 'user-management:read';
-const UPLOAD_PHOTO_FEATURE = 'user-management:upload-photo';
 const DEACTIVATE_USER_FEATURE = 'user-management:deactivate';
 const LIST_USERS_FEATURE = 'user-management:list';
 
+// The only accepted `GET /users` query params (Story 1.5). Anything else is a
+// 400 — see findAll. Kept in sync with `ListUsersQueryDto` + `PaginationQueryDto`.
+const LIST_QUERY_PARAMS = new Set([
+  'page',
+  'pageSize',
+  'firstName',
+  'lastName',
+  'position',
+  'country',
+  'city',
+  'workEmail',
+  'workPhone',
+  'birthDay',
+  'birthMonth',
+  'companyJoinDate',
+  'employmentStatus',
+]);
+
+// Story 1.3 photo-upload validation (profile/README decisions 3 & 4):
+// a profile avatar, not a document store.
+const PHOTO_MAX_BYTES = 5 * 1024 * 1024; // 5 MiB
+const PHOTO_ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp'];
+
 @Controller('users')
-@UseGuards(SessionGuard, AccessControlGuard)
+@UseGuards(SessionGuard, AccessControlGuard, SelfOnlyGuard)
 export class UsersController {
   constructor(
-    private readonly registerUserAction: RegisterUserAction,
     private readonly editUserAction: EditUserAction,
-    private readonly getUserAction: GetUserAction,
+    private readonly getUserCardAction: GetUserCardAction,
     private readonly uploadUserPhotoAction: UploadUserPhotoAction,
     private readonly deactivateUserAction: DeactivateUserAction,
     private readonly listUsersAction: ListUsersAction,
+    private readonly importPopulationAction: ImportPopulationAction,
   ) {}
 
   @Get()
   @RequireFeature(LIST_USERS_FEATURE)
   async findAll(
     @Query() query: ListUsersQueryDto,
-  ): Promise<PaginatedResponseDto<UserResponse>> {
+    @Req() req: Request,
+  ): Promise<PaginatedResponseDto<UserListItem>> {
+    // The global pipe is `whitelist` only — it strips unknown query keys
+    // silently. Story 1.5 (um-list-09/11) requires a hard 400 instead: FR-15
+    // internal columns (`ttId`, `isActive`, `createdBy`) are never filterable
+    // and there is no `sort`/`order` override, so reject anything that is not
+    // one of the accepted params before it can be silently ignored.
+    const unknownParams = Object.keys(req.query).filter(
+      (key) => !LIST_QUERY_PARAMS.has(key),
+    );
+    if (unknownParams.length > 0) {
+      throw new BadRequestException(
+        `unsupported query parameter(s): ${unknownParams.join(', ')}`,
+      );
+    }
+
     const page = await this.listUsersAction.execute(query);
     return new PaginatedResponseDto(
-      page.items.map(toUserResponse),
+      page.items.map(toUserListItem),
       page.total,
       page.page,
       page.pageSize,
     );
   }
 
-  @Post()
-  @HttpCode(HttpStatus.CREATED)
-  @RequireFeature(CREATE_USER_FEATURE)
-  async create(@CurrentSession() session: Session, @Body() dto: CreateUserDto) {
-    return toUserResponse(
-      await this.registerUserAction.execute(dto, session.userId),
-    );
+  // Literal sibling — declared BEFORE `:id` so a `:id` handler never swallows it
+  // (`id = 'import'`), per api-conventions.md. There is no `POST /users` create
+  // route: the population is a seeded import (AD-16 / AD-21).
+  @Post('import')
+  @HttpCode(HttpStatus.OK)
+  @RequireFeature(IMPORT_POPULATION_FEATURE)
+  @UseInterceptors(FileInterceptor('file'))
+  async importPopulation(
+    @CurrentSession() session: Session,
+    @UploadedFile() file: Express.Multer.File | undefined,
+  ) {
+    if (!file) {
+      throw new BadRequestException(
+        'a multipart "file" part (the semicolon-delimited CSV) is required',
+      );
+    }
+    return this.importPopulationAction.execute(file.buffer, session.userId);
   }
 
   @Get(':id')
   @RequireFeatureForTarget(READ_USER_FEATURE)
-  async findOne(@Param('id') id: string) {
-    return toUserResponse(await this.getUserAction.execute(id));
+  async findOne(
+    @CurrentSession() session: Session,
+    @Param('id') id: string,
+  ): Promise<UserCardResponse> {
+    return this.getUserCardAction.execute(session.userId, id);
   }
 
   @Patch(':id')
@@ -90,15 +151,34 @@ export class UsersController {
     return toUserResponse(await this.editUserAction.execute(id, dto));
   }
 
+  // Self-only by identity (FR-9 / Open Decision vi) — NOT a functional
+  // permission, so no `@RequireFeature*` and no facade call; `SelfOnlyGuard`
+  // enforces `session.userId === :id`. Mirrors `umac-09`.
   @Put(':id/photo')
-  @RequireFeatureForTarget(UPLOAD_PHOTO_FEATURE)
-  @UseInterceptors(FileInterceptor('photo'))
+  @SelfOnly()
+  @UseInterceptors(
+    FileInterceptor('photo', {
+      limits: { fileSize: PHOTO_MAX_BYTES },
+      fileFilter: (_req, file, cb) => {
+        if (PHOTO_ALLOWED_MIME.includes(file.mimetype)) {
+          cb(null, true);
+          return;
+        }
+        cb(
+          new BadRequestException(
+            `unsupported photo content type "${file.mimetype}" (allowed: ${PHOTO_ALLOWED_MIME.join(', ')})`,
+          ),
+          false,
+        );
+      },
+    }),
+  )
   async uploadPhoto(
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File | undefined,
   ) {
-    if (!file) {
-      throw new BadRequestException('photo file is required');
+    if (!file || file.size === 0 || !file.buffer?.length) {
+      throw new BadRequestException('a non-empty photo file is required');
     }
 
     return toUserResponse(

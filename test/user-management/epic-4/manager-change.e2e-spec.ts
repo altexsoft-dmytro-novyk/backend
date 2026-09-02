@@ -50,7 +50,7 @@ import {
  * residual: a failed `POST` after a successful `DELETE` may leave the employee
  * temporarily manager-less. This suite always `DELETE`s before re-`POST`ing.
  */
-describe('Epic 4 · Story 4.1 — Change an Employee\'s Manager (e2e, committed red)', () => {
+describe("Epic 4 · Story 4.1 — Change an Employee's Manager (e2e, committed red)", () => {
   let testApp: TestApp;
   let fx: RunFixtures;
 

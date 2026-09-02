@@ -66,7 +66,9 @@ describe('Mentorship pool (men-pool-*) — Stage-2 committed red [G-CTX + G-PERM
 
     const pool = await A.pool(bob.id);
     expect(pool.status).toBe(200); // RED: route missing (G-CTX) / G-PERM
-    const rows = pairsOf(pool.body) as unknown as Array<Record<string, unknown>>;
+    const rows = pairsOf(pool.body) as unknown as Array<
+      Record<string, unknown>
+    >;
     const byId = new Map(rows.map((r) => [r.id, r]));
     for (const mentor of [mona, nina]) {
       const row = byId.get(mentor.id);
@@ -106,9 +108,9 @@ describe('Mentorship pool (men-pool-*) — Stage-2 committed red [G-CTX + G-PERM
 
     const pool = await A.pool(bob.id);
     expect(pool.status).toBe(200);
-    const row = (pairsOf(pool.body) as unknown as Array<Record<string, unknown>>).find(
-      (r) => r.id === mona.id,
-    );
+    const row = (
+      pairsOf(pool.body) as unknown as Array<Record<string, unknown>>
+    ).find((r) => r.id === mona.id);
     expect(row).toBeDefined();
     expect(row).toMatchObject({ id: mona.id, openToMentoring: true });
     for (const leakKey of [

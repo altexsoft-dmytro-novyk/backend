@@ -37,7 +37,8 @@ export const CANONICAL_PERMISSIONS = [
 const DEFAULT_LOCK_TIMEOUT_MS = 30_000;
 
 /** DEC-UM-007. The same rule ACM-0 applies when it STORES the value. */
-const normalizeWorkEmail = (workEmail: string) => workEmail.trim().toLowerCase();
+const normalizeWorkEmail = (workEmail: string) =>
+  workEmail.trim().toLowerCase();
 
 export class AccessControlBootstrapError extends Error {
   constructor(message: string) {
@@ -58,7 +59,9 @@ function lockTimeoutMs(): number {
   const raw = process.env.ACCESS_CONTROL_BOOTSTRAP_LOCK_TIMEOUT_MS;
   if (!raw) return DEFAULT_LOCK_TIMEOUT_MS;
   const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_LOCK_TIMEOUT_MS;
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_LOCK_TIMEOUT_MS;
 }
 
 /**
@@ -255,7 +258,9 @@ async function attachmentExists(
   return rows.length > 0;
 }
 
-export async function bootstrapAccessControl(prisma: PrismaClient): Promise<void> {
+export async function bootstrapAccessControl(
+  prisma: PrismaClient,
+): Promise<void> {
   const configured = process.env.ROOT_WORK_EMAIL;
   if (!configured || configured.trim() === '') {
     fail(
@@ -277,8 +282,11 @@ export async function bootstrapAccessControl(prisma: PrismaClient): Promise<void
           rootUserId: string;
           policyId: string;
         }[]
-      >(`SELECT key, "normalizedRootEmail", "rootUserId", "policyId"
-         FROM "AccessControlBootstrap" WHERE key = $1 FOR UPDATE`, BOOTSTRAP_KEY);
+      >(
+        `SELECT key, "normalizedRootEmail", "rootUserId", "policyId"
+         FROM "AccessControlBootstrap" WHERE key = $1 FOR UPDATE`,
+        BOOTSTRAP_KEY,
+      );
 
       const root = await locateRoot(tx, normalizedRootEmail);
 

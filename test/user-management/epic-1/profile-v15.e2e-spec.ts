@@ -40,6 +40,19 @@ import { RunFixtures, type TestApp, bootstrapTestApp } from './fixtures';
  *
  * AD-3: real `AppModule`, real Prisma / migrated PostgreSQL, no provider
  * overrides. DEC-UM-010: one worker, run-namespaced rows, wrapped teardown.
+ *
+ * ── 2026-09-01 (UMAC-1 Stage 3) — GET assertions made envelope-aware ────────
+ * `GET /users/:id` now returns the CAP-3 `{ data, canEdit }` envelope, so the
+ * follow-up reads below assert `res.body.data.*` and `canEdit === false`.
+ * KNOWN REGRESSION, not fixed here: the write calls themselves (`PATCH`,
+ * `PUT .../photo`) now hit the real fail-closed facade — `user-management:edit`
+ * / `user-management:upload-photo` are unseeded and the target-scoped write
+ * gate is UMAC-2's to implement — so every `it` in this suite currently ends
+ * in `403`. This suite depends on BOTH the interim session resolver's lax
+ * `Bearer <token:Bob>` AND the retired interim adapter's `Boolean(userId)`
+ * write allowance; it needs the same real-seeded-UUID + real-edge fixture
+ * rework the e2e audit assigns to `profile.e2e-spec.ts`, plus the UMAC-2 write
+ * gate, before it can be green again. Tracked as a follow-up.
  */
 
 const BOB = 'Bearer <token:Bob>'; // literal placeholder — see scope note
@@ -95,10 +108,16 @@ describe('Epic 1 · Profile data correctness — PATCH /users/:id, PUT /users/:i
         .get(`/users/${alice.id}`)
         .set('authorization', BOB);
       expect(read.status).toBe(200);
-      expect(read.body).toMatchObject({
+      // CAP-3: GET /users/:id now returns the `{ data, canEdit }` envelope.
+      const card = read.body as {
+        data: Record<string, unknown>;
+        canEdit: boolean;
+      };
+      expect(card.data).toMatchObject({
         position: 'Senior Engineer',
         city: 'Krakow',
       });
+      expect(card.canEdit).toBe(false);
     });
   });
 
@@ -123,7 +142,9 @@ describe('Epic 1 · Profile data correctness — PATCH /users/:id, PUT /users/:i
         .get(`/users/${alice.id}`)
         .set('authorization', ALICE);
       expect(read.status).toBe(200);
-      expect((read.body as { photo?: unknown }).photo).toBe(writeBody.photo);
+      expect((read.body as { data: { photo?: unknown } }).data.photo).toBe(
+        writeBody.photo,
+      );
     });
   });
 
@@ -144,12 +165,12 @@ describe('Epic 1 · Profile data correctness — PATCH /users/:id, PUT /users/:i
         .get(`/users/${alice.id}`)
         .set('authorization', BOB);
       expect(read.status).toBe(200);
-      expect((read.body as { workEmail: string }).workEmail).toBe(
-        aliceEmailBefore,
-      );
-      expect((read.body as { workEmail: string }).workEmail).not.toBe(
-        colin.workEmail,
-      );
+      expect(
+        (read.body as { data: { workEmail: string } }).data.workEmail,
+      ).toBe(aliceEmailBefore);
+      expect(
+        (read.body as { data: { workEmail: string } }).data.workEmail,
+      ).not.toBe(colin.workEmail);
     });
   });
 
@@ -167,11 +188,12 @@ describe('Epic 1 · Profile data correctness — PATCH /users/:id, PUT /users/:i
         .send({ ttId });
       expect(write.status).toBe(409);
 
-      const read = await request(server())
-        .get(`/users/${alice.id}`)
-        .set('authorization', BOB);
-      expect(read.status).toBe(200);
-      expect((read.body as { ttId: string | null }).ttId).toBeNull();
+      // `ttId` is not an S1-card field (AD-13) so the `{ data }` envelope never
+      // carries it — verify the rejected PATCH left it untouched at the source.
+      const persisted = await testApp.prisma.user.findUnique({
+        where: { id: alice.id },
+      });
+      expect(persisted?.ttId).toBeNull();
     });
   });
 });

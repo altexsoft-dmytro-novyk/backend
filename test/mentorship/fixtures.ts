@@ -132,9 +132,7 @@ export function s13Summary(body: unknown): S13SummaryShape | null {
     record.s13Summary ??
     record.s13Mentorship ??
     null;
-  return candidate && typeof candidate === 'object'
-    ? (candidate as S13SummaryShape)
-    : null;
+  return candidate && typeof candidate === 'object' ? candidate : null;
 }
 
 /**
@@ -356,9 +354,7 @@ export class MentorshipFixtures {
       columns: string[],
     ): Promise<void> => {
       if (!table) return;
-      const where = columns
-        .map((c) => `"${c}" = ANY($1::uuid[])`)
-        .join(' OR ');
+      const where = columns.map((c) => `"${c}" = ANY($1::uuid[])`).join(' OR ');
       // Column names assume Prisma-default camelCase columns (schema.prisma
       // house style — `reportsToUserId` etc. are unquoted-camelCase in the DB).
       await this.prisma.$executeRawUnsafe(

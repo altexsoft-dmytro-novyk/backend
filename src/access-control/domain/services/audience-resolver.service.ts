@@ -1,9 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { Audience } from '../audience';
-import {
-  IDENTITY_PORT,
-  type IdentityPort,
-} from '../interfaces/identity.port';
+import { IDENTITY_PORT, type IdentityPort } from '../interfaces/identity.port';
 import {
   RELATIONSHIP_GRAPH_PORT,
   type RelationshipGraphPort,
@@ -66,9 +63,7 @@ export class AudienceResolverService {
     // Self is exclusive and never reaches the graph; an unconfirmed target
     // never reaches it either, because deriving facts for an identity that
     // failed validation is the derivation CAP-1 orders us not to do.
-    const others = targets.filter(
-      (id) => id !== viewerId && confirmed.has(id),
-    );
+    const others = targets.filter((id) => id !== viewerId && confirmed.has(id));
 
     const facts =
       others.length > 0

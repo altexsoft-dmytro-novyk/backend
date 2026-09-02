@@ -147,6 +147,41 @@ export function writeTempPopulationCsv(dataRows: CsvRow[]): string {
   return file;
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// Story 1.5 (List Employees) Stage-2 helper — seed a current EmploymentStatus
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * Give `userId` a current (`validTo IS NULL`) `EmploymentStatus` of `status`,
+ * closing any existing current row first (the partial unique index
+ * `employment_status_one_current_per_user` permits only one current row per
+ * user). Story 1.1 shipped the aggregate; the Epic 5 departure workflow that
+ * sets `dismissed` in production is CC-06-blocked and exposes no HTTP surface,
+ * so `um-list-05` / `um-list-06` seed the fact directly against the test DB
+ * (README "Decisions made in-scenario" §6; testing-strategy.md AD-3 — "stage-2
+ * seeds the EmploymentStatus: dismissed fact directly").
+ *
+ * Cascades away with the user row on teardown (`employment_status.userId` FK is
+ * `ON DELETE CASCADE`), so `RunFixtures.cleanup` needs no extra step.
+ */
+export async function seedCurrentEmploymentStatus(
+  prisma: PrismaClient,
+  userId: string,
+  status: 'active' | 'dismissed',
+  opts: { validFrom?: string; closeExistingAt?: string } = {},
+): Promise<void> {
+  const validFrom = new Date(opts.validFrom ?? '2020-01-01');
+  const closeAt = new Date(
+    opts.closeExistingAt ?? opts.validFrom ?? '2020-01-01',
+  );
+  await prisma.$executeRawUnsafe(
+    `UPDATE employment_status SET "validTo" = $1 WHERE "userId" = $2 AND "validTo" IS NULL`,
+    closeAt,
+    userId,
+  );
+  await prisma.employmentStatus.create({ data: { userId, status, validFrom } });
+}
+
 /** `true` iff a relation exists — lets a test assert "table missing" crisply. */
 export async function relationExists(
   prisma: PrismaClient,
@@ -157,4 +192,127 @@ export async function relationExists(
     table,
   );
   return rows[0]?.exists === true;
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Story 1.1 `POST /users/import` real-consumer HTTP E2E helpers (AD-1 Stage 2)
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * The delivered semicolon-CSV header, verbatim
+ * (`docs/Accounts_template.csv` — [seed README] "Column → User field mapping").
+ * Kept as a literal so the fixture builder does not have to read the repo file;
+ * the fixtures are small purpose-built pseudonymised CSV strings (NFR-1).
+ */
+export const DELIVERED_CSV_COLUMNS = [
+  'FirstName',
+  'LastName',
+  'Email',
+  'Birthday',
+  'PositionId',
+  'PositionName',
+  'RegistrationDate',
+  'DepartmentId',
+  'DepartmentName',
+  'DismissedDate',
+  'IsDismissed',
+  'EmployeeType',
+  'TimeZone',
+  'CountryId',
+  'CountryCode',
+  'CountryName',
+  'CountryStateId',
+  'CountryStateName',
+] as const;
+
+export type SeedCsvColumn = (typeof DELIVERED_CSV_COLUMNS)[number];
+export type SeedCsvRow = Partial<Record<SeedCsvColumn, string>>;
+
+export const DELIVERED_CSV_HEADER = DELIVERED_CSV_COLUMNS.join(';');
+
+/**
+ * Build an in-memory semicolon-delimited CSV with the delivered header verbatim.
+ * A column omitted from a row object is emitted as the literal token `NULL`
+ * (the import maps `NULL`/empty per DEC — `isCsvNull`); pass `''` explicitly to
+ * emit a genuinely empty cell (the `um-seed-09` "missing required field" case).
+ */
+export function toDeliveredCsv(rows: SeedCsvRow[]): string {
+  const lines = [
+    DELIVERED_CSV_HEADER,
+    ...rows.map((row) =>
+      DELIVERED_CSV_COLUMNS.map((column) =>
+        row[column] === undefined ? 'NULL' : row[column],
+      ).join(';'),
+    ),
+  ];
+  return `${lines.join('\n')}\n`;
+}
+
+/**
+ * Expected synchronous summary body of a structurally valid import
+ * ([seed README] "Row-level problems → 200 OK").
+ */
+export interface ImportSummary {
+  created: number;
+  updated: number;
+  departmentsCreated: number;
+  skipped: number;
+  errors: Array<{ line: number; email: string | null; reason: string }>;
+}
+
+/**
+ * Delete everything an import run under `marker` (a run-scoped email infix)
+ * could have written, in FK-safe order. Guarded by `relationExists` so it is a
+ * no-op while the Story 1.1 schema (`department` / `department_membership` /
+ * `employment_status` / `user_events`) does not exist yet. Every step wrapped —
+ * one failure never skips the rest (DEC-UM-010).
+ */
+export async function cleanupImportedRows(
+  prisma: PrismaClient,
+  marker: string,
+): Promise<void> {
+  const like = `%${marker}%`;
+  const steps: Array<() => Promise<unknown>> = [
+    async () => {
+      if (await relationExists(prisma, 'user_events')) {
+        await prisma.$executeRawUnsafe(
+          `DELETE FROM user_events WHERE "userId" IN (SELECT id FROM users WHERE "workEmail" ILIKE $1)`,
+          like,
+        );
+      }
+    },
+    async () => {
+      if (await relationExists(prisma, 'department_membership')) {
+        await prisma.$executeRawUnsafe(
+          `DELETE FROM department_membership WHERE "userId" IN (SELECT id FROM users WHERE "workEmail" ILIKE $1)`,
+          like,
+        );
+      }
+    },
+    async () => {
+      if (await relationExists(prisma, 'employment_status')) {
+        await prisma.$executeRawUnsafe(
+          `DELETE FROM employment_status WHERE "userId" IN (SELECT id FROM users WHERE "workEmail" ILIKE $1)`,
+          like,
+        );
+      }
+    },
+    async () => {
+      if (await relationExists(prisma, 'department')) {
+        await prisma.$executeRawUnsafe(
+          `DELETE FROM department WHERE name ILIKE $1 OR "externalId" ILIKE $1`,
+          like,
+        );
+      }
+    },
+    () =>
+      prisma.user.deleteMany({ where: { workEmail: { contains: marker } } }),
+  ];
+  for (const step of steps) {
+    try {
+      await step();
+    } catch (error) {
+      console.warn('[um-seed] imported-row cleanup step failed', error);
+    }
+  }
 }

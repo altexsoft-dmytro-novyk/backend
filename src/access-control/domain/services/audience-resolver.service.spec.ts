@@ -75,7 +75,10 @@ describe('AudienceResolverService (Phase 0)', () => {
 
   describe('ACF-AU-02 · direct reporting line', () => {
     it('resolves Reporting for a manager over a live direct report', async () => {
-      const resolver = new AudienceResolverService(new FakeGraph([ALICE]), ACTIVE_IDENTITY);
+      const resolver = new AudienceResolverService(
+        new FakeGraph([ALICE]),
+        ACTIVE_IDENTITY,
+      );
 
       const audiences = await resolver.resolve(BOB, [ALICE]);
 
@@ -85,7 +88,10 @@ describe('AudienceResolverService (Phase 0)', () => {
 
   describe('ACF-AU-03 · transitive reporting line', () => {
     it('resolves Reporting for an ancestor reached through the recursive walk', async () => {
-      const resolver = new AudienceResolverService(new FakeGraph([BOB, ALICE]), ACTIVE_IDENTITY);
+      const resolver = new AudienceResolverService(
+        new FakeGraph([BOB, ALICE]),
+        ACTIVE_IDENTITY,
+      );
 
       const audiences = await resolver.resolve(CAROL, [ALICE]);
 
@@ -95,7 +101,10 @@ describe('AudienceResolverService (Phase 0)', () => {
 
   describe('ACF-AU-04 · direct people partner', () => {
     it('resolves PP from the assignment fact alone, with no reporting edge', async () => {
-      const resolver = new AudienceResolverService(new FakeGraph([], [ALICE]), ACTIVE_IDENTITY);
+      const resolver = new AudienceResolverService(
+        new FakeGraph([], [ALICE]),
+        ACTIVE_IDENTITY,
+      );
 
       const audiences = await resolver.resolve(PAULA, [ALICE]);
 
@@ -105,7 +114,10 @@ describe('AudienceResolverService (Phase 0)', () => {
 
   describe('ACF-AU-05 · colleague fallback', () => {
     it('falls back to Colleague when no relationship qualifies', async () => {
-      const resolver = new AudienceResolverService(new FakeGraph(), ACTIVE_IDENTITY);
+      const resolver = new AudienceResolverService(
+        new FakeGraph(),
+        ACTIVE_IDENTITY,
+      );
 
       const audiences = await resolver.resolve(COLIN, [ALICE]);
 
@@ -117,7 +129,10 @@ describe('AudienceResolverService (Phase 0)', () => {
     it('grants nothing to an ancestor when the walk stopped at the broken node', async () => {
       // The graph reports no reachable descendants: the deactivated manager is
       // neither a target nor a bridge, so Frank never reaches Erin.
-      const resolver = new AudienceResolverService(new FakeGraph([]), ACTIVE_IDENTITY);
+      const resolver = new AudienceResolverService(
+        new FakeGraph([]),
+        ACTIVE_IDENTITY,
+      );
 
       const audiences = await resolver.resolve(FRANK, [ERIN]);
 
@@ -127,7 +142,10 @@ describe('AudienceResolverService (Phase 0)', () => {
 
   describe('ACF-FC-02 · PP HR line withheld', () => {
     it('gives the PP’s own manager nothing over the PP’s employee', async () => {
-      const resolver = new AudienceResolverService(new FakeGraph([PAULA], []), ACTIVE_IDENTITY);
+      const resolver = new AudienceResolverService(
+        new FakeGraph([PAULA], []),
+        ACTIVE_IDENTITY,
+      );
 
       const audiences = await resolver.resolve(HANA, [ALICE]);
 

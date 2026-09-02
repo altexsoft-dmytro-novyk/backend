@@ -33,7 +33,10 @@ describe('ACM-5 Stage 2 — CAP-5 section access (PostgreSQL)', () => {
   const ids: Record<string, string> = {};
   const emailFor = (persona: string) => `${runId}-${persona}@company.example`;
 
-  const createUser = async (persona: string, isActive = true): Promise<string> => {
+  const createUser = async (
+    persona: string,
+    isActive = true,
+  ): Promise<string> => {
     const user = await prisma.user.create({
       data: {
         firstName: persona,
@@ -132,7 +135,9 @@ describe('ACM-5 Stage 2 — CAP-5 section access (PostgreSQL)', () => {
         where: { userId: { in: fixtureIds } },
       });
       await prisma.user.deleteMany({
-        where: { id: { in: fixtureIds.filter((id) => id !== ids.FixtureOwner) } },
+        where: {
+          id: { in: fixtureIds.filter((id) => id !== ids.FixtureOwner) },
+        },
       });
       await prisma.user.delete({ where: { id: ids.FixtureOwner } });
     }

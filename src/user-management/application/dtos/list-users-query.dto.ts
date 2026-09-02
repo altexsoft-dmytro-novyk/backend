@@ -1,13 +1,17 @@
-import { Transform, Type } from 'class-transformer';
+import { Type } from 'class-transformer';
 import {
-  IsBoolean,
   IsDateString,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../../common/dtos/pagination-query.dto';
 
+// Story 1.5 — the ONLY accepted `GET /users` query params. Anything else
+// (`ttId`, `isActive`, `sort`, `order`, unknown keys) is rejected 400 by the
+// route-scoped `forbidNonWhitelisted` pipe (see UsersController#findAll):
+// FR-15 internal columns are never filterable, and there is no sort override.
 export class ListUsersQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsString()
@@ -51,17 +55,9 @@ export class ListUsersQueryDto extends PaginationQueryDto {
   @IsDateString()
   companyJoinDate?: string;
 
+  // Absent → active only. Gated by `user-management:list` alone (no new
+  // capability) — README §6.
   @IsOptional()
-  @IsString()
-  ttId?: string;
-
-  @IsOptional()
-  @Transform(({ value }: { value: unknown }) => {
-    if (typeof value !== 'string') return value;
-    if (value === 'true') return true;
-    if (value === 'false') return false;
-    return value;
-  })
-  @IsBoolean()
-  isActive?: boolean;
+  @IsIn(['active', 'dismissed'])
+  employmentStatus?: 'active' | 'dismissed';
 }
