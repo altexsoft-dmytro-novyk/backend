@@ -33,6 +33,15 @@ export interface SystemEventInput {
   createdBy: string;
 }
 
+/**
+ * A manually-added career-timeline event (Story 3.2 `POST /users/:id/events`).
+ * Same descriptor shape as `SystemEventInput`, but `source` is pinned to
+ * `'manual'` — the server stamps it, a client can never set it.
+ */
+export type ManualEventInput = Omit<SystemEventInput, 'source'> & {
+  source: 'manual';
+};
+
 export interface UserEventRepositoryPort {
   /**
    * Every non-soft-deleted event for one user, chronological: `eventDate ASC`
@@ -40,6 +49,34 @@ export interface UserEventRepositoryPort {
    * (`deletedAt IS NOT NULL`) are excluded.
    */
   listForUser(userId: string): Promise<UserEvent[]>;
+
+  /**
+   * Insert one manually-added event and return the created row. Unlike the
+   * auto-event write (co-written inside the triggering mutation's transaction),
+   * a manual add is a standalone insert — there is no sibling mutation to share
+   * a transaction with. The new row is always active (`deletedAt` null).
+   */
+  add(input: ManualEventInput): Promise<UserEvent>;
+
+  /**
+   * Story 3.3 — the one still-active event with `id === eventId` that also sits
+   * on `userId`'s timeline, or `null`. The `(userId, eventId)` scope AND
+   * `deletedAt IS NULL` are enforced in a single query, so an unknown id, an
+   * event on another user's timeline (cross-timeline), and an already
+   * soft-deleted row all collapse to `null` — the caller turns that into one
+   * `404`, with no 404-vs-403 enumeration surface.
+   */
+  findActiveOnTimeline(
+    userId: string,
+    eventId: string,
+  ): Promise<UserEvent | null>;
+
+  /**
+   * Story 3.3 — soft-delete one event by id: set `deletedAt = now()`. The row
+   * persists; it just drops out of every active-rows query. The caller has
+   * already asserted the row was active via `findActiveOnTimeline`.
+   */
+  softDelete(eventId: string): Promise<void>;
 }
 
 export const USER_EVENT_REPOSITORY_PORT = Symbol('USER_EVENT_REPOSITORY_PORT');

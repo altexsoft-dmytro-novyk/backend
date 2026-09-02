@@ -9,29 +9,33 @@
 export interface CareerTimelineAccessPort {
   /**
    * §3.2 row S9 READ audience (Self `R`; Reporting line / Project line / PP
-   * `RW`; Colleague `—`).
+   * `RW`; Colleague `—`), WIDENED by Story 3.2 with "edit implies read".
    *
    * INTERIM (v1.5): `AccessControlFacade.canAccessSection` does not answer
-   * `'profile:timeline'` yet (S1/S10/S11 only). Implemented via
-   * `resolveAudiences(viewerId, [targetUserId])` — allow iff the resolved set
-   * intersects `{ self, reporting, pp }`. Project line is fail-closed
-   * system-wide (the resolver does not emit it) and starts matching with no
-   * change here once Access Control ships it. Replace with
-   * `canAccessSection('profile:timeline', …)` when that AC increment reaches
-   * stage-3-production (tracked in
+   * `'profile:timeline'` yet (S1/S10/S11 only). Implemented as
+   * `resolveAudiences(viewerId, [targetUserId]) ∩ { self, reporting, pp,
+   * project }` OR `isAllowed(viewer, 'profile:timeline:write')` — the latter is
+   * the timeline-scoped interim of the §2.4 Full-profile-access grant (Dmytro,
+   * 2026-09-02). Project line is fail-closed system-wide (the resolver does not
+   * emit it) and starts matching with no change here once Access Control ships
+   * it. Replace with `canAccessSection('profile:timeline', …)` when that AC
+   * increment reaches stage-3-production (tracked in
    * `_bmad-output/implementation-artifacts/access-control/deferred-work.md`).
    */
   canReadTimeline(viewerId: string, targetUserId: string): Promise<boolean>;
 
   /**
-   * The §2.2 dual gate for manual add/correct/delete (Stories 3.2/3.3):
-   * `isAllowed(viewer, 'profile:timeline:write')` AND an S9 write audience,
-   * further narrowed by DEC-UM-001 (assigned PP + direct Unit Manager only).
+   * The manual add/correct/delete gate (Stories 3.2/3.3).
    *
-   * `'profile:timeline:write'` is unseeded and the DEC-UM-001 narrowing is not
-   * built, so this returns `false` for every viewer today — which is correct.
-   * It is wired through the facade now so the `canEdit` envelope hint cannot
-   * drift from the write path Story 3.2 will enforce.
+   * INTERIM (Story 3.2, career-timeline/README.md — Dmytro 2026-09-02):
+   * `isAllowed(viewer, 'profile:timeline:write')` ALONE — a feature action, NO
+   * data-audience half. The only seeded holder is `hr-admin`, which carries no
+   * S9 write audience at all (§2.2 NORMATIVE), so requiring the audience half
+   * now would close the gate to everyone. `targetUserId` is unused at this
+   * stage. The §2.2 dual gate — the permission AND `canAccessSection(
+   * 'profile:timeline', target) === 'write'`, narrowed by DEC-UM-001 to
+   * assigned PP + direct Unit Manager — is the deferred target, reactivated
+   * with the FR-permission-matrix grant to the PP / UM roles.
    */
   canEditTimeline(viewerId: string, targetUserId: string): Promise<boolean>;
 }

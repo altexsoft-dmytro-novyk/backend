@@ -15,8 +15,10 @@ import type { CareerTimelineAccessPort } from '../domain/interfaces/career-timel
 const TIMELINE_READ_AUDIENCES = new Set(['self', 'reporting', 'pp', 'project']);
 
 // The FR-matrix `<domain>:<section>:<op>` permission key for manual timeline
-// mutation (Stories 3.2/3.3). Unseeded today, so `isAllowed` is `false` for
-// every viewer — Story 3.2's scenario stage owns the final holder decision.
+// mutation (Stories 3.2/3.3). Story 3.2 ships it granted to the `hr-admin` role
+// only; the default kernel/ACM seed does not carry it yet (tracked in
+// career-timeline/README.md "What blocks Stage-2"), so a real deployment grants
+// it via the FR policy until that lands.
 const TIMELINE_WRITE_PERMISSION = 'profile:timeline:write';
 
 @Injectable()
@@ -38,35 +40,37 @@ export class CareerTimelineAccessFacadeAdapter implements CareerTimelineAccessPo
       targetUserId,
     ]);
     const resolved = audiences.get(targetUserId);
-    if (!resolved) {
-      return false;
-    }
-    for (const audience of resolved) {
-      if (TIMELINE_READ_AUDIENCES.has(audience)) {
-        return true;
+    if (resolved) {
+      for (const audience of resolved) {
+        if (TIMELINE_READ_AUDIENCES.has(audience)) {
+          return true;
+        }
       }
     }
-    return false;
+    // INTERIM: "edit implies read" (Dmytro, 2026-09-02) — a holder of
+    // `profile:timeline:write` can read the timeline back. This is the
+    // timeline-scoped interim of the §2.4 Full-profile-access grant; the
+    // resolver-level `full` audience / bypass that lets a §2.4 holder read
+    // EVERY section is a deferred Access Control item (deferred-work.md). Same
+    // expiry trigger as the audience rule above.
+    return this.facade.isAllowed(viewerId, TIMELINE_WRITE_PERMISSION);
   }
 
   async canEditTimeline(
     viewerId: string,
     targetUserId: string,
   ): Promise<boolean> {
-    // The §2.2 dual gate. `profile:timeline:write` is unseeded, so this short-
-    // circuits `false` for every viewer today — the correct current answer.
-    // Wired through the facade now so the `canEdit` envelope hint tracks the
-    // Story 3.2 write path and cannot drift.
-    const hasPermission = await this.facade.isAllowed(
-      viewerId,
-      TIMELINE_WRITE_PERMISSION,
-    );
-    if (!hasPermission) {
-      return false;
-    }
-    // S9 write audience. DEC-UM-001 narrows this to assigned PP + direct Unit
-    // Manager; that narrowing is Story 3.2's to build. Until `canAccessSection`
-    // answers 'profile:timeline', reuse the interim audience rule.
-    return this.canReadTimeline(viewerId, targetUserId);
+    // INTERIM (Story 3.2, career-timeline/README.md — Dmytro 2026-09-02): the
+    // manual-write gate at this stage is `isAllowed(viewer,
+    // 'profile:timeline:write')` ALONE — a feature action, NO data-audience
+    // half. The only seeded holder is `hr-admin`, which carries no S9 write
+    // audience at all (§2.2 NORMATIVE), so requiring the audience half now
+    // would close the gate to everyone. `targetUserId` is unused at this stage:
+    // DEC-UM-001 audience narrowing (assigned PP + direct Unit Manager,
+    // per-assignee scoped) is the deferred target, reactivated with the
+    // FR-permission-matrix grant of `profile:timeline:write` to the PP / UM
+    // roles.
+    void targetUserId;
+    return this.facade.isAllowed(viewerId, TIMELINE_WRITE_PERMISSION);
   }
 }

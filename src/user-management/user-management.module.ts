@@ -14,12 +14,14 @@ import { SESSION_TOKEN_ISSUER_PORT } from './domain/interfaces/session-token-iss
 import { USER_REPOSITORY_PORT } from './domain/interfaces/user.repository.port';
 import { AuthController } from './application/controllers/auth.controller';
 import { UsersController } from './application/controllers/users.controller';
+import { AddManualUserEventAction } from './application/actions/add-manual-user-event.action';
 import { DeactivateUserAction } from './application/actions/deactivate-user.action';
 import { EditUserAction } from './application/actions/edit-user.action';
 import { GetUserCardAction } from './application/actions/get-user-card.action';
 import { GetUserEventsAction } from './application/actions/get-user-events.action';
 import { ImportPopulationAction } from './application/actions/import-population.action';
 import { ListUsersAction } from './application/actions/list-users.action';
+import { SoftDeleteUserEventAction } from './application/actions/soft-delete-user-event.action';
 import { ConsumeMagicLinkAction } from './application/actions/consume-magic-link.action';
 import { RequestMagicLinkAction } from './application/actions/request-magic-link.action';
 import { UploadUserPhotoAction } from './application/actions/upload-user-photo.action';
@@ -53,6 +55,8 @@ import { UserRepository } from './infrastructure/user.repository';
     ListUsersAction,
     ImportPopulationAction,
     GetUserEventsAction,
+    AddManualUserEventAction,
+    SoftDeleteUserEventAction,
     RequestMagicLinkAction,
     ConsumeMagicLinkAction,
     SessionGuard,

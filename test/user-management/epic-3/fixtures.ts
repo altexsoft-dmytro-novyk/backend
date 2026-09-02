@@ -12,13 +12,11 @@ import type { PrismaService } from '../../../src/prisma/prisma.service';
 // inserts, the FR-grant chain (`grantFunctionalRole`), run-namespaced emails and
 // wrapped scoped teardown (DEC-UM-010).
 //
-// This file adds only what Epic 3 needs on top: the *edit the career timeline*
+// This file adds only what Epic 3 needs on top: the `profile:timeline:write`
 // permission-key constant and two raw-SQL helpers for the `user_events`
-// database-state assertions (`um-ct-01` / `um-ct-02` have no HTTP surface today —
-// no `GET /users/:id/events` route — and the `UserEvents` Prisma model does not
-// exist, so `prisma.userEvent` is not a compilable accessor: every event probe
-// goes through `$queryRawUnsafe` against the not-yet-created `user_events`
-// table).
+// database-state assertions (used where the request under test has no trusted
+// HTTP read-back — e.g. a `403`/`400` path, or the `POST` route not existing
+// yet, so `queryUserEvents` reads committed rows directly).
 export {
   bootstrapTestApp,
   bearer,
@@ -42,23 +40,22 @@ export {
 } from '../epic-1/fixtures';
 
 /**
- * The runtime *edit the career timeline* functional permission (FR-12,
- * DEC-UM-001, access-control.md §2.2 dual gate).
+ * The runtime functional permission for manual career-timeline mutation
+ * (requirements §2.3 line 122 "edit the career timeline"; §4.9 manual override;
+ * PRD FR-12). Story 3.2's Stage-1 reconciliation (Dmytro, 2026-09-02) settled
+ * the name to the FR-permission-matrix `<domain>:<section>:<op>` shape —
+ * `profile:timeline:write` — matching the production adapter's
+ * `TIMELINE_WRITE_PERMISSION` constant
+ * (`src/user-management/infrastructure/career-timeline-access-facade.adapter.ts`).
  *
- * AMBIGUITY RESOLVED — no canonical key exists on disk. `access-control.md`
- * refers to it only in prose ("the runtime *edit the career timeline*
- * permission"); its normative §2.3 permission catalog is not in the repo, and
- * the kernel bootstrap `CANONICAL_PERMISSIONS` seeds only
- * `user-management:create` / `:deactivate` / `:list`. Per the dispatch ("if
- * unnamed, pick a lowercase `context:action` string and note it") this suite
- * picks `user-management:edit-career-timeline`, following the same
- * `context:action` shape the other user-management keys use
- * (`users.controller.ts`: `:create` / `:edit` / `:read` / `:upload-photo` /
- * `:deactivate` / `:list`). Story 3.2's scenario stage owns the final name; if
- * it differs, change this one constant.
+ * Seeding state at this stage: the key is NOT yet in the kernel/ACM bootstrap
+ * (`CANONICAL_PERMISSIONS` seeds only `user-management:create` / `:deactivate` /
+ * `:list`), so `isAllowed` is `false` for every viewer until a suite grants it
+ * explicitly via `fx.grantFunctionalRole(userId, [CAREER_TIMELINE_PERMISSION_KEY])`
+ * (which auto-creates and tracks the `Permission` row for teardown). Story 3.2
+ * ships it granted to the `hr-admin` role only.
  */
-export const CAREER_TIMELINE_PERMISSION_KEY =
-  'user-management:edit-career-timeline';
+export const CAREER_TIMELINE_PERMISSION_KEY = 'profile:timeline:write';
 
 /** `true` iff the `user_events` relation exists — lets a test assert "model missing" crisply. */
 export async function userEventsTableExists(
@@ -78,6 +75,7 @@ export interface RawUserEvent {
   eventDate: Date;
   details: unknown;
   deletedAt: Date | null;
+  createdBy: string;
 }
 
 /**
@@ -93,7 +91,7 @@ export async function queryUserEvents(
     return [];
   }
   return prisma.$queryRawUnsafe<RawUserEvent[]>(
-    `SELECT id, "userId", type, source, "eventDate", details, "deletedAt"
+    `SELECT id, "userId", type, source, "eventDate", details, "deletedAt", "createdBy"
        FROM "user_events"
       WHERE "userId" = $1 AND "deletedAt" IS NULL
       ORDER BY "eventDate" ASC`,
