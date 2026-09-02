@@ -34,21 +34,11 @@ import {
 // faked; only the composition point moves, because production rebinding is
 // User Management's own story.
 //
-// The allow/deny rule encoded here is the PROVISIONAL mapping recorded in the
-// suite README: self/reporting/pp allow, colleague denies. It is an Access
-// Control assumption pending answer 3 of the User Management contract request.
-//
-// SUPERSEDED — 2026-09-01 (human product decision). User Management answered
-// Q3 the OTHER way: a colleague GET /users/:id returns the S1 identity card
-// (200); only an empty audience denies (leak-free 404). See
-// docs/test-cases/access-control-foundation/README.md and
-// _bmad-output/specs/spec-user-management-access-control-adoption/SPEC.md.
-// The resolver is UNAFFECTED (Colin/Frank/Hana still resolve to the
-// `colleague` fallback), but the `.expect(403)` assertions in ACF-AU-05 /
-// ACF-FC-01 / ACF-FC-02 below now encode a contract that no longer holds and
-// must be reworked as resolver audience-set assertions (like ACF-FC-04) in a
-// fresh AD-1 pass with its own approval. Not done here — left as-is so the
-// supersession is visible rather than silently rewritten.
+// The HTTP allow path for ACF-AU-01..04 uses a test-only adapter mapping:
+// self/reporting/pp allow via GET /users/:id. Colleague and fail-closed cases
+// (ACF-AU-05, ACF-FC-01, ACF-FC-02) assert resolver audience labels directly,
+// because the 2026-09-01 UM contract returns the S1 card (200) for colleague
+// reads — HTTP status is no longer the resolver oracle for those scenarios.
 class FacadeBackedAccessControlAdapter implements AccessControlPort {
   constructor(private readonly facade: AccessControlFacade) {}
 
@@ -83,6 +73,16 @@ describe('Access Control Phase 0 — audience resolution over GET /users/:id (e2
   const ids: Record<string, string> = {};
   const emailFor = (persona: string) => `${runId}-${persona}@company.example`;
   const asPersona = (persona: string) => `Bearer <token:${ids[persona]}>`;
+
+  const expectAudienceLabels = (
+    audiences: Map<string, Set<string>>,
+    targetId: string,
+    expected: string[],
+  ) => {
+    expect([...(audiences.get(targetId) ?? [])].sort()).toEqual(
+      [...expected].sort(),
+    );
+  };
 
   // The org graph is created straight through Prisma: no relationship endpoint
   // exists to build it over HTTP, and inventing one would be User Management's
@@ -227,33 +227,36 @@ describe('Access Control Phase 0 — audience resolution over GET /users/:id (e2
     });
   });
 
-  describe('ACF-AU-05 · Unrelated colleague is denied', () => {
-    it('returns 403 and no profile fields', async () => {
-      const response = await request(app.getHttpServer())
-        .get(`/users/${ids.Alice}`)
-        .set('authorization', asPersona('Colin'))
-        .expect(403);
+  describe('ACF-AU-05 · Unrelated colleague fallback', () => {
+    it('resolves Colleague for an unrelated viewer over a live target', async () => {
+      const facade = app.get(AccessControlFacade);
 
-      expect(response.body).not.toHaveProperty('workEmail');
-      expect(response.body).not.toHaveProperty('firstName');
+      const audiences = await facade.resolveAudiences(ids.Colin, [ids.Alice]);
+
+      expectAudienceLabels(audiences, ids.Alice, ['colleague']);
     });
   });
 
   describe('ACF-FC-01 · Walk stops at a broken reports-to edge', () => {
-    it('denies the ancestor above a deactivated manager', async () => {
-      await request(app.getHttpServer())
-        .get(`/users/${ids.Erin}`)
-        .set('authorization', asPersona('Frank'))
-        .expect(403);
+    it('falls back to Colleague when the walk stopped at a deactivated manager', async () => {
+      const facade = app.get(AccessControlFacade);
+
+      const audiences = await facade.resolveAudiences(ids.Frank, [ids.Erin]);
+
+      expectAudienceLabels(audiences, ids.Erin, ['colleague']);
     });
   });
 
   describe('ACF-FC-02 · PP inheritance stops at the assigned partner', () => {
-    it('denies the People Partner’s own manager', async () => {
-      await request(app.getHttpServer())
-        .get(`/users/${ids.Alice}`)
-        .set('authorization', asPersona('Hana'))
-        .expect(403);
+    it('resolves Colleague only — no PP propagation to the partner’s manager', async () => {
+      const facade = app.get(AccessControlFacade);
+
+      const audiences = await facade.resolveAudiences(ids.Hana, [ids.Alice]);
+      const labels = audiences.get(ids.Alice) ?? new Set<string>();
+
+      expectAudienceLabels(audiences, ids.Alice, ['colleague']);
+      expect(labels.has('pp')).toBe(false);
+      expect(labels.has('reporting')).toBe(false);
     });
   });
 
