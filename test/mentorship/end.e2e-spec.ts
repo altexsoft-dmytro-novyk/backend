@@ -150,7 +150,10 @@ describe('Mentorship pair end (men-end-*) — Stage-2 committed red [G-CTX + G-P
       ['pp (Paula)', paula],
     ] as const) {
       const read = await A.getPair(pairId, viewer.id);
-      expect({ label, status: read.status }).toMatchObject({ label, status: 200 });
+      expect({ label, status: read.status }).toMatchObject({
+        label,
+        status: 200,
+      });
       expect((read.body as { closureNote?: string }).closureNote).toBeTruthy();
     }
   });

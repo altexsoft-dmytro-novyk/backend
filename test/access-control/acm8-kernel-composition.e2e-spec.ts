@@ -12,7 +12,6 @@ import {
   ACCESS_CONTROL_PORT,
   type AccessControlPort,
 } from '../../src/user-management/domain/interfaces/access-control.port';
-import { InterimAccessControlAdapter } from '../../src/user-management/infrastructure/interim-access-control.adapter';
 
 /**
  * ACM-8 Stage 2 — CAP-6 deployable kernel composition.
@@ -28,20 +27,18 @@ import { InterimAccessControlAdapter } from '../../src/user-management/infrastru
  * yet, so AccessControlFacade is not resolvable from this container. That is
  * the exact production behavior ACM-8-production is gated on.
  *
- * Why this file imports ACCESS_CONTROL_PORT/AccessControlPort and the
- * concrete InterimAccessControlAdapter from src/user-management/ (a
- * cross-context import domain-driven-design.md otherwise forbids, tracked in
- * _bmad-output/implementation-artifacts/access-control/deferred-work.md):
- * ACM8-KC-02 exists specifically to prove that importing AccessControlModule
- * has NOT silently rebound User Management's port — the assertion's whole
- * value is checking identity against the real DI token and the real
- * (still-interim) adapter class. That requires the literal symbols User
- * Management defines; a locally re-declared token or a duck-typed stand-in
- * would not be the same DI key and could pass without proving anything.
- * Investigated 2026-08-31: there is no fix that removes this import without
- * editing src/user-management/** (out of this build's scope) — see the
- * deferred-work.md entry for the full reasoning, which also covers
- * audience-resolution.e2e-spec.ts's identical import.
+ * ACM8-KC-02/03 realigned 2026-09-01 (UMAC-1 Stage 3): User Management has now
+ * rebound ACCESS_CONTROL_PORT to the real AccessControlFacade-backed adapter
+ * and deleted interim-access-control.adapter.ts (SPEC CAP-1, AD-21). This file
+ * previously imported that concrete class to assert the binding was UNCHANGED;
+ * that class is gone and the assertion is inverted. KC-02 now checks the port
+ * resolves to the facade-backed adapter (by resolved class name, adding no new
+ * cross-context src/ import — the ACCESS_CONTROL_PORT token import is
+ * pre-existing and irreducible, see deferred-work.md #83/#85); KC-03 now checks
+ * GET /users/:id goes through the real facade (self → 200 enveloped, stranger →
+ * 403). The ACM-8 scenario docs acm8-kc-02/03 still describe the old
+ * interim-unchanged expectation and are a follow-up realignment for the
+ * access-control context.
  */
 describe('ACM-8 Stage 2 — CAP-6 kernel composition (PostgreSQL)', () => {
   let app: INestApplication<App>;
@@ -89,35 +86,55 @@ describe('ACM-8 Stage 2 — CAP-6 kernel composition (PostgreSQL)', () => {
   });
 
   // docs/test-cases/access-control-kernel/kernel-composition/acm8-kc-02-interim-adapter-binding-unchanged.md
-  it('ACM8-KC-02 still resolves ACCESS_CONTROL_PORT to InterimAccessControlAdapter in the same composed container', () => {
+  // Realigned (UMAC-1 Stage 3): the port is now the real facade-backed adapter.
+  it('ACM8-KC-02 resolves ACCESS_CONTROL_PORT to the real AccessControlFacade-backed adapter in the same composed container', () => {
     const port = moduleFixture.get<AccessControlPort>(ACCESS_CONTROL_PORT);
-    expect(port).toBeInstanceOf(InterimAccessControlAdapter);
+    // Asserted by resolved class name — no concrete cross-context src/ import.
+    expect(port?.constructor?.name).toBe('AccessControlFacadeAdapter');
+    // It delegates to the facade; it is not the facade itself.
     expect(port).not.toBeInstanceOf(AccessControlFacade);
+    expect(typeof port.isAllowed).toBe('function');
+    expect(typeof port.isAllowedForTarget).toBe('function');
   });
 
   // docs/test-cases/access-control-kernel/kernel-composition/acm8-kc-03-user-management-behavior-unchanged.md
-  it('ACM8-KC-03 leaves GET /users/:id on the interim adapter, unaffected by kernel composition', async () => {
-    const created = await request(app.getHttpServer())
-      .post('/users')
-      .set('authorization', 'Bearer <token:Root>')
-      .send({
+  // Realigned (UMAC-1 Stage 3): GET /users/:id now runs through the real facade.
+  it('ACM8-KC-03 routes GET /users/:id through the real facade — self reads the S1 card, an unconfirmed viewer is denied', async () => {
+    const targetId = uuidv7();
+    const target = await prisma.user.create({
+      data: {
+        id: targetId,
         firstName: 'Kc03',
         lastName: 'Fixture',
         position: 'Engineer',
         country: 'Poland',
         city: 'Warsaw',
         workEmail: emailFor('kc-03-target'),
-        companyJoinDate: '2024-01-01',
-      });
-    const targetId = (created.body as { id: string }).id;
+        companyJoinDate: new Date('2024-01-01'),
+        createdBy: targetId,
+      },
+    });
 
-    // InterimAccessControlAdapter#isAllowedForTarget is `Boolean(userId)`:
-    // any authenticated session may read any target. This asserts that
-    // exact, unchanged interim decision — not a new access-control result.
+    // Self resolves a non-empty audience over an active target → 200 with the
+    // `{ data, canEdit }` envelope (canEdit false — `user-management:edit`
+    // unseeded).
+    const selfRead = await request(app.getHttpServer())
+      .get(`/users/${target.id}`)
+      .set('authorization', `Bearer <token:${target.id}>`);
+    expect(selfRead.status).toBe(200);
+    expect(Object.keys(selfRead.body as object).sort()).toEqual([
+      'canEdit',
+      'data',
+    ]);
+    expect((selfRead.body as { canEdit: boolean }).canEdit).toBe(false);
+
+    // An unconfirmed viewer (string id, matches no active User) → empty
+    // audience → the guard denies → 403. The interim `Boolean(userId)` leak is
+    // gone.
     await request(app.getHttpServer())
-      .get(`/users/${targetId}`)
+      .get(`/users/${target.id}`)
       .set('authorization', 'Bearer <token:AnyAuthenticatedViewer>')
-      .expect(200);
+      .expect(403);
   });
 
   // docs/test-cases/access-control-kernel/kernel-composition/acm8-kc-04-no-http-or-debug-endpoint-added.md

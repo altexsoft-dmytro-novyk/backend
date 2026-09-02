@@ -24,8 +24,9 @@ export class ListUsersAction {
     if (query.companyJoinDate !== undefined) {
       filter.companyJoinDate = new Date(query.companyJoinDate);
     }
-    if (query.ttId !== undefined) filter.ttId = query.ttId;
-    if (query.isActive !== undefined) filter.isActive = query.isActive;
+    if (query.employmentStatus !== undefined) {
+      filter.employmentStatus = query.employmentStatus;
+    }
 
     return this.userService.list(filter, query.page, query.pageSize);
   }

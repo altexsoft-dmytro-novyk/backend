@@ -18,7 +18,14 @@ export class S3StorageAdapter implements ObjectStoragePort, OnModuleInit {
   constructor(config: ConfigService) {
     this.bucket = config.getOrThrow<string>('AWS_S3_BUCKET');
     this.region = config.getOrThrow<string>('AWS_REGION');
-    this.endpoint = config.get<string>('AWS_ENDPOINT_URL');
+    // Prefer the ambient environment for the endpoint so a process that
+    // repoints `AWS_ENDPOINT_URL` at runtime (e.g. failing over, or an
+    // outage-simulation boot) is honoured; `ConfigModule` validation is a
+    // one-shot snapshot taken when `AppModule` is first loaded, so it cannot
+    // see a later change. In steady state the two agree (dotenv populates
+    // `process.env`), and in production both are unset → real AWS endpoints.
+    this.endpoint =
+      process.env.AWS_ENDPOINT_URL ?? config.get<string>('AWS_ENDPOINT_URL');
 
     this.client = new S3Client({
       region: this.region,

@@ -121,10 +121,22 @@ describe('ACM-2 Stage 2 — CAP-4 isAllowed (PostgreSQL)', () => {
 
     await prisma.policyPermission.createMany({
       data: [
-        { policyId: grantPolicy.id, permissionId: grantedPermission.id, policyType: 'FR' },
+        {
+          policyId: grantPolicy.id,
+          permissionId: grantedPermission.id,
+          policyType: 'FR',
+        },
         // Exists in the catalog and on a policy, but not on Nonmatching's policy.
-        { policyId: grantPolicy.id, permissionId: otherPermission.id, policyType: 'FR' },
-        { policyId: removalPolicy.id, permissionId: grantedPermission.id, policyType: 'FR' },
+        {
+          policyId: grantPolicy.id,
+          permissionId: otherPermission.id,
+          policyType: 'FR',
+        },
+        {
+          policyId: removalPolicy.id,
+          permissionId: grantedPermission.id,
+          policyType: 'FR',
+        },
       ],
     });
     await prisma.userPolicy.createMany({
@@ -141,11 +153,61 @@ describe('ACM-2 Stage 2 — CAP-4 isAllowed (PostgreSQL)', () => {
 
   afterAll(async () => {
     if (prisma) {
-      await prisma.userPolicy.deleteMany({ where: { policyId: { in: [ids.GrantPolicy, ids.NonmatchingPolicy, ids.ArPolicy, ids.RemovalPolicy].filter(Boolean) } } });
-      await prisma.policyPermission.deleteMany({ where: { policyId: { in: [ids.GrantPolicy, ids.RemovalPolicy].filter(Boolean) } } });
-      await prisma.policy.deleteMany({ where: { id: { in: [ids.GrantPolicy, ids.NonmatchingPolicy, ids.ArPolicy, ids.RemovalPolicy].filter(Boolean) } } });
-      await prisma.permission.deleteMany({ where: { id: { in: [ids.GrantedPermission, ids.OtherPermission].filter(Boolean) } } });
-      await prisma.user.deleteMany({ where: { id: { in: Object.values(ids).filter((id) => id !== ids.Owner && ![ids.GrantPolicy, ids.NonmatchingPolicy, ids.ArPolicy, ids.GrantedPermission, ids.OtherPermission].includes(id)) } } });
+      await prisma.userPolicy.deleteMany({
+        where: {
+          policyId: {
+            in: [
+              ids.GrantPolicy,
+              ids.NonmatchingPolicy,
+              ids.ArPolicy,
+              ids.RemovalPolicy,
+            ].filter(Boolean),
+          },
+        },
+      });
+      await prisma.policyPermission.deleteMany({
+        where: {
+          policyId: {
+            in: [ids.GrantPolicy, ids.RemovalPolicy].filter(Boolean),
+          },
+        },
+      });
+      await prisma.policy.deleteMany({
+        where: {
+          id: {
+            in: [
+              ids.GrantPolicy,
+              ids.NonmatchingPolicy,
+              ids.ArPolicy,
+              ids.RemovalPolicy,
+            ].filter(Boolean),
+          },
+        },
+      });
+      await prisma.permission.deleteMany({
+        where: {
+          id: {
+            in: [ids.GrantedPermission, ids.OtherPermission].filter(Boolean),
+          },
+        },
+      });
+      await prisma.user.deleteMany({
+        where: {
+          id: {
+            in: Object.values(ids).filter(
+              (id) =>
+                id !== ids.Owner &&
+                ![
+                  ids.GrantPolicy,
+                  ids.NonmatchingPolicy,
+                  ids.ArPolicy,
+                  ids.GrantedPermission,
+                  ids.OtherPermission,
+                ].includes(id),
+            ),
+          },
+        },
+      });
     }
     await moduleFixture?.close();
   });
@@ -158,12 +220,25 @@ describe('ACM-2 Stage 2 — CAP-4 isAllowed (PostgreSQL)', () => {
   // ACM2-IA-02
   it('observes a deleted UserPolicies attachment on the next call', async () => {
     await expect(allow(ids.Revoked, grantedKey)).resolves.toBe(true);
-    await prisma.userPolicy.delete({ where: { userId_policyId: { userId: ids.Revoked, policyId: ids.GrantPolicy } } });
+    await prisma.userPolicy.delete({
+      where: {
+        userId_policyId: { userId: ids.Revoked, policyId: ids.GrantPolicy },
+      },
+    });
     await expect(allow(ids.Revoked, grantedKey)).resolves.toBe(false);
 
     await expect(allow(ids.RemovedPolicy, grantedKey)).resolves.toBe(true);
-    await prisma.userPolicy.delete({ where: { userId_policyId: { userId: ids.RemovedPolicy, policyId: ids.RemovalPolicy } } });
-    await prisma.policyPermission.deleteMany({ where: { policyId: ids.RemovalPolicy } });
+    await prisma.userPolicy.delete({
+      where: {
+        userId_policyId: {
+          userId: ids.RemovedPolicy,
+          policyId: ids.RemovalPolicy,
+        },
+      },
+    });
+    await prisma.policyPermission.deleteMany({
+      where: { policyId: ids.RemovalPolicy },
+    });
     await prisma.policy.delete({ where: { id: ids.RemovalPolicy } });
     await expect(allow(ids.RemovedPolicy, grantedKey)).resolves.toBe(false);
   });
@@ -185,7 +260,9 @@ describe('ACM-2 Stage 2 — CAP-4 isAllowed (PostgreSQL)', () => {
 
   // ACM2-IA-06
   it('denies a case-only variant of a granted key', async () => {
-    await expect(allow(ids.Granted, grantedKey.toUpperCase())).resolves.toBe(false);
+    await expect(allow(ids.Granted, grantedKey.toUpperCase())).resolves.toBe(
+      false,
+    );
   });
 
   // ACM2-IA-10
@@ -206,11 +283,15 @@ describe('ACM-2 Stage 2 — CAP-4 isAllowed (PostgreSQL)', () => {
   // ACM2-IA-09 — a real PostgreSQL query failure, restored in finally.
   it('propagates a database query failure instead of returning false', async () => {
     const hiddenName = `Permissions_acm2_hidden_${uuidv7().replaceAll('-', '')}`;
-    await prisma.$executeRawUnsafe(`ALTER TABLE "Permissions" RENAME TO "${hiddenName}"`);
+    await prisma.$executeRawUnsafe(
+      `ALTER TABLE "Permissions" RENAME TO "${hiddenName}"`,
+    );
     try {
       await expect(allow(ids.Granted, grantedKey)).rejects.toBeDefined();
     } finally {
-      await prisma.$executeRawUnsafe(`ALTER TABLE "${hiddenName}" RENAME TO "Permissions"`);
+      await prisma.$executeRawUnsafe(
+        `ALTER TABLE "${hiddenName}" RENAME TO "Permissions"`,
+      );
     }
   });
 });

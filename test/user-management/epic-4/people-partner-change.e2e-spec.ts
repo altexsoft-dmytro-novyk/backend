@@ -47,7 +47,7 @@ import {
  * AD-3: real `AppModule`, real Prisma, NO `overrideProvider`. DEC-UM-010: one
  * worker, run-namespaced data, `@concurrency` = `Promise.all` in one test.
  */
-describe('Epic 4 · Story 4.2 — Change an Employee\'s People Partner (e2e, committed red — BLOCKED CC-04 + CC-07)', () => {
+describe("Epic 4 · Story 4.2 — Change an Employee's People Partner (e2e, committed red — BLOCKED CC-04 + CC-07)", () => {
   let testApp: TestApp;
   let fx: RunFixtures;
 
@@ -123,7 +123,7 @@ describe('Epic 4 · Story 4.2 — Change an Employee\'s People Partner (e2e, com
   });
 
   // um-rel-10 -----------------------------------------------------------
-  it('um-rel-10 · Root naming itself as Alice\'s PP is rejected, Paula unchanged, no journal', async () => {
+  it("um-rel-10 · Root naming itself as Alice's PP is rejected, Paula unchanged, no journal", async () => {
     const root = await seedActor('rel10-root');
     const alice = await fx.user('rel10-alice');
     const paula = await fx.user('rel10-paula');

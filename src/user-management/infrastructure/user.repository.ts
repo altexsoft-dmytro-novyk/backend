@@ -65,11 +65,25 @@ export class UserRepository implements UserRepositoryPort {
     page: number,
     pageSize: number,
   ): Promise<UserListPage> {
-    const where = {
-      ...filter,
-      // Default to active-only unless the caller explicitly asked for a
-      // specific isActive value (including explicitly false).
-      isActive: filter.isActive ?? true,
+    const { employmentStatus, ...identity } = filter;
+
+    // The current employment fact = the row with `validTo IS NULL`. "Dismissed"
+    // means that row exists and is `status='dismissed'`; anything else
+    // (including no current row at all) counts as active (README §6).
+    const currentDismissed: Prisma.EmploymentStatusListRelationFilter = {
+      some: { validTo: null, status: 'dismissed' },
+    };
+    const employmentStatusWhere: Prisma.UserWhereInput =
+      employmentStatus === 'dismissed'
+        ? { employmentStatuses: currentDismissed }
+        : { NOT: { employmentStatuses: currentDismissed } };
+
+    const where: Prisma.UserWhereInput = {
+      ...identity,
+      // Purged rows are never listed, regardless of any filter (decisions §
+      // "isActive is not a filter").
+      isActive: true,
+      ...employmentStatusWhere,
     };
 
     const [items, total] = await Promise.all([
@@ -77,7 +91,13 @@ export class UserRepository implements UserRepositoryPort {
         where,
         skip: (page - 1) * pageSize,
         take: pageSize,
-        orderBy: { createdAt: 'asc' },
+        orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
+        include: {
+          employmentStatuses: {
+            where: { validTo: null },
+            select: { status: true },
+          },
+        },
       }),
       this.prisma.user.count({ where }),
     ]);

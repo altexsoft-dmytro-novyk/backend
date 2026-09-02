@@ -133,12 +133,9 @@ describe('Mentorship views (men-view-*) — Stage-2 committed red [G-CTX (+G-S13
     // S1 card gains a `mentor` field alongside `manager` / `peoplePartner`.
     // Today the interim S1 card has no `mentor` key -> RED on the missing key.
     const mentor = (profile.body as { mentor?: unknown }).mentor as
-      | { userId?: string }
-      | string
-      | undefined;
+      { userId?: string } | string | undefined;
     expect(mentor).toBeDefined();
-    const mentorId =
-      typeof mentor === 'string' ? mentor : mentor?.userId;
+    const mentorId = typeof mentor === 'string' ? mentor : mentor?.userId;
     expect(mentorId).toBe(mona.id);
   });
 

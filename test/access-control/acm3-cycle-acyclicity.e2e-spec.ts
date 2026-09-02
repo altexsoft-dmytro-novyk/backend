@@ -257,7 +257,7 @@ describe('ACM-3 Stage 2 — Reporting acyclicity (PostgreSQL)', () => {
       expectAudienceEntry(audiences, ids.Ivan, ['colleague']);
     });
 
-    it("counts the target itself as a visited node when the walk returns to it", async () => {
+    it('counts the target itself as a visited node when the walk returns to it', async () => {
       const audiences = await resolveWithin(ids.Yulia, [ids.Zoran]);
 
       // Zoran -> Yulia (proof) -> Zoran: the repeat is the walk's own start

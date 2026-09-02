@@ -10,9 +10,7 @@ type AllowedRow = { allowed: boolean };
  * beyond this call, and database failures intentionally propagate.
  */
 @Injectable()
-export class PrismaFunctionalRoleRepository
-  implements FunctionalRoleRepositoryPort
-{
+export class PrismaFunctionalRoleRepository implements FunctionalRoleRepositoryPort {
   constructor(private readonly prisma: PrismaService) {}
 
   async isAllowed(userId: string, permissionKey: string): Promise<boolean> {
