@@ -6,6 +6,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { OrgRelationshipService } from '../../domain/services/org-relationship.service';
+import { DepartureService } from '../../domain/services/departure.service';
 import { UserService } from '../../domain/services/user.service';
 import { SetDepartmentManagerDto } from '../dtos/set-department-manager.dto';
 
@@ -28,6 +29,7 @@ export class SetDepartmentManagerAction {
   constructor(
     private readonly orgRelationships: OrgRelationshipService,
     private readonly userService: UserService,
+    private readonly departures: DepartureService,
   ) {}
 
   async execute(
@@ -61,6 +63,11 @@ export class SetDepartmentManagerAction {
       throw new BadRequestException(
         'you cannot assign yourself as a department manager',
       );
+    }
+
+    // Post-schedule forward guard (Story 5.1 / spec §7).
+    if (await this.departures.hasNonAppliedDeparture(dto.managerUserId)) {
+      throw new ConflictException({ error: 'target_has_scheduled_departure' });
     }
 
     const result = await this.orgRelationships.setDepartmentManager({

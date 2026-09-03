@@ -6,6 +6,10 @@ import { CAREER_TIMELINE_ACCESS_PORT } from './domain/interfaces/career-timeline
 import { ACCESS_JOURNAL_ACCESS_PORT } from './domain/interfaces/access-journal-access.port';
 import { ACCESS_JOURNAL_REPOSITORY_PORT } from './domain/interfaces/access-journal.repository.port';
 import { ORG_RELATIONSHIP_WRITER_PORT } from './domain/interfaces/org-relationship-writer.port';
+import { DEPARTURE_REPOSITORY_PORT } from './domain/interfaces/departure.repository.port';
+import { DEPARTURE_EXECUTOR_PORT } from './domain/interfaces/departure-executor.port';
+import { DEPARTURE_EFFECTS_PORT } from './domain/interfaces/departure-effects.port';
+import { BUSINESS_TIME_ZONE } from './domain/interfaces/business-time-zone.token';
 import { IDENTITY_CARD_ACCESS_PORT } from './domain/interfaces/identity-card-access.port';
 import { USER_EVENT_REPOSITORY_PORT } from './domain/interfaces/user-event.repository.port';
 import { MAGIC_LINK_DISPATCHER_PORT } from './domain/interfaces/magic-link-dispatcher.port';
@@ -19,6 +23,8 @@ import { AuthController } from './application/controllers/auth.controller';
 import { UsersController } from './application/controllers/users.controller';
 import { RelationshipsController } from './application/controllers/relationships.controller';
 import { DepartmentsController } from './application/controllers/departments.controller';
+import { DeparturesController } from './application/controllers/departures.controller';
+import { DepartureHealthController } from './application/controllers/departure-health.controller';
 import { AddManualUserEventAction } from './application/actions/add-manual-user-event.action';
 import { DeactivateUserAction } from './application/actions/deactivate-user.action';
 import { EditUserAction } from './application/actions/edit-user.action';
@@ -33,6 +39,10 @@ import { AddDepartmentMembershipAction } from './application/actions/add-departm
 import { RemoveDepartmentMembershipAction } from './application/actions/remove-department-membership.action';
 import { SetDepartmentManagerAction } from './application/actions/set-department-manager.action';
 import { RemoveDepartmentManagerAction } from './application/actions/remove-department-manager.action';
+import { RecordDepartureAction } from './application/actions/record-departure.action';
+import { GetDepartureAction } from './application/actions/get-departure.action';
+import { ReparentDepartureAction } from './application/actions/reparent-departure.action';
+import { RetryDepartureAction } from './application/actions/retry-departure.action';
 import { ImportPopulationAction } from './application/actions/import-population.action';
 import { ListUsersAction } from './application/actions/list-users.action';
 import { SoftDeleteUserEventAction } from './application/actions/soft-delete-user-event.action';
@@ -45,6 +55,7 @@ import { SessionGuard } from './application/guards/session.guard';
 import { CareerTimelineAccessService } from './domain/services/career-timeline-access.service';
 import { CareerTimelineService } from './domain/services/career-timeline.service';
 import { OrgRelationshipService } from './domain/services/org-relationship.service';
+import { DepartureService } from './domain/services/departure.service';
 import { AccessJournalService } from './domain/services/access-journal.service';
 import { AccessJournalAccessService } from './domain/services/access-journal-access.service';
 import { IdentityCardAccessService } from './domain/services/identity-card-access.service';
@@ -55,6 +66,10 @@ import { AccessControlFacadeAdapter } from './infrastructure/access-control-faca
 import { AuthUserLookupRepository } from './infrastructure/auth-user-lookup.repository';
 import { CareerTimelineAccessFacadeAdapter } from './infrastructure/career-timeline-access-facade.adapter';
 import { OrgRelationshipRepository } from './infrastructure/org-relationship.repository';
+import { DepartureRepository } from './infrastructure/departure.repository';
+import { DepartureWorkerService } from './infrastructure/departure-worker.service';
+import { DepartureMetricsService } from './infrastructure/departure-metrics.service';
+import { NoopDepartureEffectsParticipant } from './infrastructure/noop-departure-effects.participant';
 import { AccessJournalRepository } from './infrastructure/access-journal.repository';
 import { AccessJournalAccessFacadeAdapter } from './infrastructure/access-journal-access-facade.adapter';
 import { UserEventRepository } from './infrastructure/user-event.repository';
@@ -70,6 +85,8 @@ import { UserRepository } from './infrastructure/user.repository';
     UsersController,
     RelationshipsController,
     DepartmentsController,
+    DeparturesController,
+    DepartureHealthController,
     AuthController,
   ],
   providers: [
@@ -91,6 +108,10 @@ import { UserRepository } from './infrastructure/user.repository';
     RemoveDepartmentMembershipAction,
     SetDepartmentManagerAction,
     RemoveDepartmentManagerAction,
+    RecordDepartureAction,
+    GetDepartureAction,
+    ReparentDepartureAction,
+    RetryDepartureAction,
     RequestMagicLinkAction,
     ConsumeMagicLinkAction,
     SessionGuard,
@@ -101,6 +122,7 @@ import { UserRepository } from './infrastructure/user.repository';
     CareerTimelineService,
     CareerTimelineAccessService,
     OrgRelationshipService,
+    DepartureService,
     AccessJournalService,
     AccessJournalAccessService,
     PopulationImportService,
@@ -115,6 +137,24 @@ import { UserRepository } from './infrastructure/user.repository';
     {
       provide: ORG_RELATIONSHIP_WRITER_PORT,
       useClass: OrgRelationshipRepository,
+    },
+    {
+      provide: DEPARTURE_REPOSITORY_PORT,
+      useClass: DepartureRepository,
+    },
+    // Epic 5 Story 5.2 — the effective-departure worker + its seams.
+    DepartureMetricsService,
+    DepartureWorkerService,
+    { provide: DEPARTURE_EXECUTOR_PORT, useExisting: DepartureWorkerService },
+    {
+      provide: DEPARTURE_EFFECTS_PORT,
+      useClass: NoopDepartureEffectsParticipant,
+    },
+    {
+      provide: BUSINESS_TIME_ZONE,
+      useFactory: (config: ConfigService) =>
+        config.getOrThrow<string>('BUSINESS_TIME_ZONE'),
+      inject: [ConfigService],
     },
     {
       provide: ACCESS_JOURNAL_REPOSITORY_PORT,

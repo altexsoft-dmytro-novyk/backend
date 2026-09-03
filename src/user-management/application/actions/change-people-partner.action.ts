@@ -6,6 +6,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { OrgRelationshipService } from '../../domain/services/org-relationship.service';
+import { DepartureService } from '../../domain/services/departure.service';
 import { UserService } from '../../domain/services/user.service';
 import { UpdatePeoplePartnerDto } from '../dtos/update-people-partner.dto';
 import {
@@ -26,6 +27,7 @@ export class ChangePeoplePartnerAction {
   constructor(
     private readonly orgRelationships: OrgRelationshipService,
     private readonly userService: UserService,
+    private readonly departures: DepartureService,
   ) {}
 
   async execute(
@@ -52,6 +54,11 @@ export class ChangePeoplePartnerAction {
       throw new UnprocessableEntityException(
         'the people partner target is not an active user',
       );
+    }
+
+    // Post-schedule forward guard (Story 5.1 / spec §7).
+    if (await this.departures.hasNonAppliedDeparture(dto.targetId)) {
+      throw new ConflictException({ error: 'target_has_scheduled_departure' });
     }
 
     const result = await this.orgRelationships.changePeoplePartner({

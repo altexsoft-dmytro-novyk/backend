@@ -1,5 +1,10 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+} from '@nestjs/common';
 import { OrgRelationshipService } from '../../domain/services/org-relationship.service';
+import { DepartureService } from '../../domain/services/departure.service';
 import { CreateRelationshipDto } from '../dtos/create-relationship.dto';
 import {
   toRelationshipResponse,
@@ -14,7 +19,10 @@ import {
 // UNIQUE surfaces from the repository as a `ConflictException` (409, DEC-UM-005).
 @Injectable()
 export class AssignManagerAction {
-  constructor(private readonly orgRelationships: OrgRelationshipService) {}
+  constructor(
+    private readonly orgRelationships: OrgRelationshipService,
+    private readonly departures: DepartureService,
+  ) {}
 
   async execute(
     viewerId: string,
@@ -27,6 +35,12 @@ export class AssignManagerAction {
       throw new BadRequestException(
         'an employee cannot be their own reports-to manager',
       );
+    }
+
+    // Post-schedule forward guard (Story 5.1 / spec §7): a person with a
+    // non-applied `Departure` cannot be made someone's new manager.
+    if (await this.departures.hasNonAppliedDeparture(dto.targetId)) {
+      throw new ConflictException({ error: 'target_has_scheduled_departure' });
     }
 
     const created = await this.orgRelationships.assignManager({

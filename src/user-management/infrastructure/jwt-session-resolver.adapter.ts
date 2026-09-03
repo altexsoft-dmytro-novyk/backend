@@ -6,6 +6,7 @@ import type {
   Session,
   SessionResolverPort,
 } from '../domain/interfaces/session-resolver.port';
+import { DepartureMetricsService } from './departure-metrics.service';
 import { verifySessionJwt } from './jwt.util';
 
 const BEARER_PREFIX = /^Bearer /;
@@ -42,6 +43,7 @@ export class JwtSessionResolverAdapter implements SessionResolverPort {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly departureMetrics: DepartureMetricsService,
     config: ConfigService,
   ) {
     this.jwtSecret = config.getOrThrow<string>('SESSION_JWT_SECRET');
@@ -57,16 +59,47 @@ export class JwtSessionResolverAdapter implements SessionResolverPort {
       return null;
     }
 
+    let session: Session | null = null;
     if (this.allowTestSessionTokens) {
-      const shorthand = await this.resolveTestShorthand(authorizationHeader);
-      if (shorthand) {
-        return shorthand;
-      }
+      session = await this.resolveTestShorthand(authorizationHeader);
+    }
+    if (!session) {
+      const raw = authorizationHeader.replace(BEARER_PREFIX, '');
+      const payload = verifySessionJwt(raw, this.jwtSecret);
+      session = payload ? { userId: payload.sub } : null;
     }
 
-    const raw = authorizationHeader.replace(BEARER_PREFIX, '');
-    const payload = verifySessionJwt(raw, this.jwtSecret);
-    return payload ? { userId: payload.sub } : null;
+    return this.applyEffectiveDepartureCutoff(session);
+  }
+
+  /**
+   * Epic 5 Story 5.2 (AD-20) — the request-time cutoff. From `00:00` on the
+   * effective date in `effectiveTimeZone` (the stored `dueAt`), the resolved
+   * person's session does NOT resolve — the guard returns the same `401` as an
+   * unresolved session, BEFORE any feature or audience resolution. Independent
+   * of the worker: worker lag delays materialised cleanup but can never leave a
+   * usable session for a due person. One query per request, not cached. The
+   * comparison is PostgreSQL `now()`, never JS `Date`.
+   */
+  private async applyEffectiveDepartureCutoff(
+    session: Session | null,
+  ): Promise<Session | null> {
+    if (!session) {
+      return null;
+    }
+    const rows = await this.prisma.$queryRawUnsafe<Array<{ hit: number }>>(
+      `SELECT 1 AS hit FROM "departures"
+        WHERE "userId" = $1
+          AND "dueAt" <= now()
+          AND state IN ('scheduled', 'processing', 'retry_wait', 'applied')
+        LIMIT 1`,
+      session.userId,
+    );
+    if (rows.length > 0) {
+      this.departureMetrics.recordRequestTimeCutoffDenial();
+      return null;
+    }
+    return session;
   }
 
   /**

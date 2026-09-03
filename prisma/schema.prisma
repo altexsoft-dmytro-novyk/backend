@@ -61,6 +61,11 @@ model User {
   accessJournalAsActor   AccessJournal[] @relation("AccessJournalActor")
   accessJournalAsSubject AccessJournal[] @relation("AccessJournalSubject")
 
+  // Epic 5 Story 5.1 — the AD-20 `Departure` aggregate. Back-relations only:
+  // Prisma requires them for the `userId` and `createdBy` foreign keys.
+  departures         Departure[] @relation("DepartureSubject")
+  recordedDepartures Departure[] @relation("DepartureCreatedBy")
+
   @@map("users")
 }
 
@@ -224,6 +229,54 @@ model UserEvent {
   @@map("user_events")
 }
 
+
+// ---------------------------------------------------------------------------
+// Epic 5 Story 5.1 — the AD-20 `Departure` aggregate (database-schema.md
+// §Departure, ratified). The scheduled command + worker state, separate from
+// the applied `EmploymentStatus` fact. Hand-authored to the ratified shape.
+//
+// Prisma cannot express: the partial `UNIQUE (userId) WHERE state <> 'applied'`
+// ("one non-applied Departure per user"), the `dueAt` / `effectiveTimeZone`
+// NOT-NULL + non-empty guarantee, or the applied-state machine CHECK
+// (`state = 'applied'  <=>  appliedAt IS NOT NULL`). Those live in reviewed raw
+// SQL in `20260903..._story_5_1_departure/migration.sql` — read it alongside
+// this model. Story 5.2 owns the worker-claim / fencing-token transitions;
+// Story 5.1 only ever writes `state: 'scheduled'`.
+// ---------------------------------------------------------------------------
+enum DepartureState {
+  scheduled
+  processing
+  retry_wait
+  applied
+}
+
+model Departure {
+  id                String         @id @default(uuid(7))
+  userId            String
+  effectiveDate     DateTime       @db.Date
+  effectiveTimeZone String
+  dueAt             DateTime       @db.Timestamptz
+  reason            String
+  state             DepartureState @default(scheduled)
+  idempotencyKey    String         @unique @db.Uuid
+  requestHash       String
+  attempts          Int            @default(0)
+  lastError         String?
+  nextAttemptAt     DateTime?      @db.Timestamptz
+  leaseUntil        DateTime?      @db.Timestamptz
+  leaseToken        String?        @db.Uuid
+  appliedAt         DateTime?      @db.Timestamptz
+  createdAt         DateTime       @default(now()) @db.Timestamptz
+  createdBy         String
+
+  user    User @relation("DepartureSubject", fields: [userId], references: [id], onDelete: Cascade)
+  creator User @relation("DepartureCreatedBy", fields: [createdBy], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  // Worker-claim order (Story 5.2): eligible rows in stable (effectiveDate, id).
+  @@index([state, effectiveDate, id])
+  @@map("departures")
+}
 
 enum RelationshipType {
   direct

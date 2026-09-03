@@ -1,6 +1,24 @@
 import * as Joi from 'joi';
 
+// Epic 5 Story 5.1 (AD-20) — the business day boundary for resolving a
+// `Departure.dueAt` (`00:00` on the effective date in this zone, snapshotted
+// once to `effectiveTimeZone`). Required, no UTC fallback: a wrong or missing
+// zone silently shifts every scheduled cutoff, so the app must fail fast at
+// startup. Validated as a real IANA zone — `Intl.DateTimeFormat` throws
+// `RangeError` on an unknown identifier.
+const ianaTimeZone: Joi.CustomValidator<string> = (value, helpers) => {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value });
+    return value;
+  } catch {
+    return helpers.error('any.invalid');
+  }
+};
+
 export const envValidationSchema = Joi.object({
+  BUSINESS_TIME_ZONE: Joi.string()
+    .required()
+    .custom(ianaTimeZone, 'IANA time zone'),
   NODE_ENV: Joi.string()
     .valid('development', 'production', 'test')
     .default('development'),
@@ -57,4 +75,17 @@ export const envValidationSchema = Joi.object({
     then: Joi.boolean().default(false),
     otherwise: Joi.boolean().default(true),
   }),
+
+  // Epic 5 Story 5.2 (AD-20) — the effective-departure application worker.
+  // `DEPARTURE_WORKER_ENABLED` has NO default: the mixed-process-config startup
+  // check requires every process to declare an explicit `true` / `false` so an
+  // operator can diff the effective worker topology (um-dep-03 decision 6). When
+  // `false` the `@Interval` polling loop is not registered; the injectable
+  // `DepartureWorkerService.processDueDepartures()` seam is still callable (the
+  // E2E drives it directly — DEC-UM-004).
+  DEPARTURE_WORKER_ENABLED: Joi.boolean().required(),
+  // Poll cadence for the DB-polling claim loop. Date-granular departures make a
+  // minute of materialisation lag immaterial (the request-time cutoff is
+  // independent and immediate); floor at 1s so a misconfiguration cannot busy-loop.
+  DEPARTURE_WORKER_POLL_MS: Joi.number().integer().min(1000).default(60000),
 });
