@@ -55,7 +55,63 @@ model User {
   // Epic 2 Story 2.1 — magic-link authentication. Back-relation only.
   magicLinkTokens MagicLinkToken[]
 
+  // Epic 4 Story 4.1 — the §3.4 access journal (PM/AD-29). Back-relations only:
+  // Prisma requires them for the two foreign keys; no User Management behaviour
+  // reads them (the journal is queried by `subjectUserId`, not off the User row).
+  accessJournalAsActor   AccessJournal[] @relation("AccessJournalActor")
+  accessJournalAsSubject AccessJournal[] @relation("AccessJournalSubject")
+
   @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// Epic 4 Story 4.1 — the §3.4 relationship/access journal (PM/AD-29, design
+// ratified 2026-09-02; database-schema.md §AccessJournal).
+//
+// Append-only: one immutable before/after snapshot row per fact transition,
+// written in the SAME transaction as the `Relationship` write it records. No
+// `updatedAt`/`updatedBy` — a wrong entry is never edited. It is NOT an
+// access-control mechanism and is never read on the audience-resolution path.
+// Story 4.1 writes only `kind: 'manager'`; 4.2/4.3 reuse the table and enum.
+//
+// `@db.Timestamptz` on `occurredAt` and the `(subjectUserId, occurredAt)` index
+// (the newest-first read order of `GET /users/:id/access-journal`) are the only
+// shape Prisma can express; the migration adds nothing Prisma cannot — the
+// unique `idempotencyKey` and the two RESTRICT foreign keys are all
+// Prisma-native, so this model needs no raw-SQL constraint block.
+// ---------------------------------------------------------------------------
+enum AccessJournalKind {
+  manager
+  people_partner
+  department_membership
+  department_manager
+  full_profile_grant
+  full_profile_revoke
+  shared_link_access
+}
+
+model AccessJournal {
+  id             String            @id @default(uuid(7))
+  occurredAt     DateTime          @default(now()) @db.Timestamptz
+  actorUserId    String
+  // Epic 4 Story 4.3: the subject of a `department_manager` change is a
+  // Department, not a User. Exactly one of `subjectUserId` / `subjectDepartmentId`
+  // is non-null — a raw-SQL CHECK (`num_nonnulls(...) = 1`) in the
+  // `story_4_3_department_edge_journal_subject` migration enforces it (Prisma
+  // cannot express it). Existing rows (all `subjectUserId` set) satisfy it.
+  subjectUserId       String?
+  subjectDepartmentId String?
+  kind           AccessJournalKind
+  before         Json?
+  after          Json?
+  idempotencyKey String            @unique
+
+  actor             User        @relation("AccessJournalActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  subject           User?       @relation("AccessJournalSubject", fields: [subjectUserId], references: [id], onDelete: Restrict)
+  subjectDepartment Department? @relation("AccessJournalDeptSubject", fields: [subjectDepartmentId], references: [id], onDelete: Restrict)
+
+  @@index([subjectUserId, occurredAt])
+  @@map("access_journal")
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +158,10 @@ model Department {
   parent      Department?            @relation("DeptTree", fields: [parentId], references: [id], onDelete: Restrict)
   children    Department[]           @relation("DeptTree")
   memberships DepartmentMembership[]
+
+  // Epic 4 Story 4.3 — a `department_manager` `AccessJournal` row's subject.
+  // Back-relation only.
+  accessJournalAsSubject AccessJournal[] @relation("AccessJournalDeptSubject")
 
   @@unique([externalId, name])
   @@map("department")

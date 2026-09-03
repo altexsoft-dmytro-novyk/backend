@@ -17,31 +17,44 @@ import type { PrismaService } from '../../../src/prisma/prisma.service';
 export {
   bootstrapTestApp,
   bearer,
+  expectLeakFreeBody,
   RunFixtures,
   type TestApp,
   type UserOverrides,
 } from '../access-control-adoption/fixtures';
 
 /**
- * INFERRED permission key. `access-control.md` §2.3/§3.3 names the gate only in
- * prose — "the dedicated `change organisational relationships` permission" — and
- * no catalog entry exists (`CANONICAL_PERMISSIONS` in
+ * The write gate for every Epic 4 organisational-relationship mutation. The
+ * FR-permission-matrix draft (2026-09-02,
+ * `_bmad-output/implementation-artifacts/access-control/fr-permission-matrix-draft-2026-09-02.md`
+ * §3 "Mentorship & org") settles the key for the §2.3 "change organisational
+ * relationships" permission to the `<domain>:<object>:<operation>` shape:
+ * **`org:relationships:write`**. It is NOT seeded (`CANONICAL_PERMISSIONS` in
  * `access-control-bootstrap.ts` holds only `user-management:create` /
- * `:deactivate` / `:list`). This is a plausible `context:action` string in the
- * same namespace, isolated to one constant so a single edit realigns every
- * Epic 4 test once the real key is registered. `um-rel-07`'s gate is the
- * no-target `isAllowed(viewer, <this key>)` facade check — never an
- * `actor.position === 'HR Admin'` / role-name check (AD-4, DEC-UM-002).
+ * `:deactivate` / `:list`), so `isAllowed` is `false` for every viewer until a
+ * suite grants it explicitly via
+ * `fx.grantFunctionalRole(userId, [ORG_RELATIONSHIPS_WRITE_PERMISSION])`.
+ * `um-rel-07`'s gate is the no-target `isAllowed(viewer, <this key>)` facade
+ * check — never an `actor.position === 'HR Admin'` / role-name check (AD-4,
+ * DEC-UM-002).
  */
-export const CHANGE_ORG_RELATIONSHIPS_PERMISSION =
-  'user-management:change-organisational-relationships';
+export const ORG_RELATIONSHIPS_WRITE_PERMISSION = 'org:relationships:write';
 
 /**
- * An unrelated permission for the DEC-UM-002 negative probe: the denied session
- * (Ida) holds a functional role, just not *this* permission — so the denial
- * cannot be passing for "no session / no role at all".
+ * Legacy export name kept so the still-gated Story 4.2 / 4.3 sibling suites
+ * (`people-partner-change`, `department-change`) keep compiling unchanged; the
+ * value is the settled FR-matrix key above.
  */
-export const UNRELATED_PERMISSION = 'user-management:list';
+export const CHANGE_ORG_RELATIONSHIPS_PERMISSION =
+  ORG_RELATIONSHIPS_WRITE_PERMISSION;
+
+/**
+ * An unrelated permission for the DEC-UM-002 capability-negative probe: Ida
+ * holds a functional role whose only permission is `campaigns:create` (the
+ * `um-rel-07` "create form campaigns" persona), just not *this* permission — so
+ * the denial cannot be passing for "no session / no role at all".
+ */
+export const UNRELATED_PERMISSION = 'campaigns:create';
 
 const JOURNAL_TABLE_CANDIDATES = [
   'relationship_journal',
@@ -76,4 +89,124 @@ export async function relationshipJournalTable(
     }
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// AccessJournal (PM/AD-29) — Story 4.1 stands this table up alongside the
+// (already-present, Epic 0) `Relationship` model. The table, its writer, and the
+// `GET /users/:id/access-journal` read endpoint are all implementation-absent on
+// this branch. The helpers below mirror epic-3's `userEventsTableExists` /
+// `queryUserEvents` pattern: every probe is `to_regclass`-guarded, so a suite
+// asserting "exactly one journal row" reads as a clean red (expected 1, got 0)
+// rather than throwing "relation \"access_journal\" does not exist".
+// ---------------------------------------------------------------------------
+
+/** Ratified `kind` enum (`database-schema.md` §AccessJournal). Story 4.1 writes only `manager`. */
+export const ACCESS_JOURNAL_KINDS = [
+  'manager',
+  'people_partner',
+  'department_membership',
+  'department_manager',
+  'full_profile_grant',
+  'full_profile_revoke',
+  'shared_link_access',
+] as const;
+
+export type AccessJournalKind = (typeof ACCESS_JOURNAL_KINDS)[number];
+
+export interface RawAccessJournalRow {
+  id: string;
+  occurredAt: Date;
+  actorUserId: string;
+  subjectUserId: string;
+  kind: string;
+  before: unknown;
+  after: unknown;
+  idempotencyKey: string | null;
+}
+
+/** `true` iff the `access_journal` relation exists — lets a test assert "model missing" crisply. */
+export async function accessJournalTableExists(
+  prisma: PrismaService,
+): Promise<boolean> {
+  const rows = await prisma.$queryRawUnsafe<Array<{ exists: boolean }>>(
+    `SELECT to_regclass('public.access_journal') IS NOT NULL AS "exists"`,
+  );
+  return rows[0]?.exists === true;
+}
+
+/**
+ * Every `AccessJournal` row for `subjectUserId` (optionally filtered by `kind`),
+ * newest-first — the §3.4 read order. Returns `[]` when the table does not exist
+ * yet, so "exactly one row was written in the same transaction" is a committed
+ * red assertion, not a crash.
+ */
+export async function queryAccessJournalRows(
+  prisma: PrismaService,
+  subjectUserId: string,
+  kind?: AccessJournalKind,
+): Promise<RawAccessJournalRow[]> {
+  if (!(await accessJournalTableExists(prisma))) {
+    return [];
+  }
+  const where = kind
+    ? `"subjectUserId" = $1 AND kind = $2`
+    : `"subjectUserId" = $1`;
+  const params = kind ? [subjectUserId, kind] : [subjectUserId];
+  return prisma.$queryRawUnsafe<RawAccessJournalRow[]>(
+    `SELECT id, "occurredAt", "actorUserId", "subjectUserId", kind, before, after, "idempotencyKey"
+       FROM "access_journal"
+      WHERE ${where}
+      ORDER BY "occurredAt" DESC`,
+    ...params,
+  );
+}
+
+/**
+ * Every `AccessJournal` row of a given `kind`, newest-first — regardless of
+ * `subjectUserId`. Story 4.3's `department_manager` row has a **department**
+ * subject, not a user (the `subjectUserId` FK is to `User`); Stage 3 lands the
+ * exact subject column (`spec-4-3` flag — a nullable `subjectDepartmentId`). A
+ * Stage-2 test therefore locates the row by `kind` + `before`/`after` only,
+ * never by subject. Returns `[]` when the table does not exist yet.
+ */
+export async function queryAccessJournalRowsByKind(
+  prisma: PrismaService,
+  kind: AccessJournalKind,
+): Promise<RawAccessJournalRow[]> {
+  if (!(await accessJournalTableExists(prisma))) {
+    return [];
+  }
+  return prisma.$queryRawUnsafe<RawAccessJournalRow[]>(
+    `SELECT id, "occurredAt", "actorUserId", "subjectUserId", kind, before, after, "idempotencyKey"
+       FROM "access_journal"
+      WHERE kind = $1
+      ORDER BY "occurredAt" DESC`,
+    kind,
+  );
+}
+
+/**
+ * Delete every `access_journal` row touching the run's users. Call first in
+ * `afterEach`, ahead of `RunFixtures.cleanup()` (relationships → policies /
+ * permissions → users), so teardown order is journal → relationships →
+ * policies/permissions → users (DEC-UM-010). Guarded on table existence — a
+ * no-op today.
+ */
+export async function cleanupAccessJournal(
+  prisma: PrismaService,
+  userIds: Iterable<string>,
+): Promise<void> {
+  const ids = [...userIds];
+  if (ids.length === 0) return;
+  try {
+    if (!(await accessJournalTableExists(prisma))) return;
+    await prisma.$executeRawUnsafe(
+      `DELETE FROM "access_journal"
+        WHERE "subjectUserId" = ANY($1::text[]) OR "actorUserId" = ANY($1::text[])`,
+      ids,
+    );
+  } catch (error) {
+    console.warn('[epic-4] cleanupAccessJournal failed', error);
+  }
 }
