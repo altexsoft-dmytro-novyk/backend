@@ -1,4 +1,9 @@
 import * as Joi from 'joi';
+import { checkCorsOriginsCsv } from './cors-origins';
+import {
+  DEFAULT_LOG_LEVELS_CSV,
+  checkLogLevelsCsv,
+} from '../common/logging/log-levels';
 
 // Epic 5 Story 5.1 (AD-20) — the business day boundary for resolving a
 // `Departure.dueAt` (`00:00` on the effective date in this zone, snapshotted
@@ -23,7 +28,30 @@ export const envValidationSchema = Joi.object({
     .valid('development', 'production', 'test')
     .default('development'),
   PORT: Joi.number().port().default(3001),
-  CORS_ORIGIN: Joi.string().uri().default('http://localhost:4200'),
+  // Comma-separated subset of the Nest console log levels (see
+  // `common/logging/log-levels.ts`) — `main.ts` passes the parsed list to
+  // `app.useLogger()`. Not a threshold: list every level you want emitted.
+  LOG_LEVELS: Joi.string()
+    .default(DEFAULT_LOG_LEVELS_CSV)
+    .custom(
+      (value: string, helpers) =>
+        checkLogLevelsCsv(value) === null
+          ? value
+          : helpers.error('any.invalid'),
+      'comma-separated Nest log levels',
+    ),
+  // A comma-separated list of allowed origins (see `config/cors-origins.ts` and
+  // `main.ts`), e.g. `http://localhost:4200,https://app.example`. Each entry is
+  // a bare origin — `scheme://host[:port]`, no path or trailing slash.
+  CORS_ORIGIN: Joi.string()
+    .default('http://localhost:4200')
+    .custom(
+      (value: string, helpers) =>
+        checkCorsOriginsCsv(value) === null
+          ? value
+          : helpers.error('any.invalid'),
+      'comma-separated bare origins',
+    ),
   DATABASE_URL: Joi.string().required(),
   // `tlds:false` — the codebase uses RFC-2606 `*.example` placeholders (and CI
   // has no real mailbox), so validate the `local@domain.tld` shape but not the

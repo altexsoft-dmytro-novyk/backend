@@ -1,6 +1,7 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { OrgRelationshipService } from '../../domain/services/org-relationship.service';
@@ -12,6 +13,8 @@ import { OrgRelationshipService } from '../../domain/services/org-relationship.s
 // employee's only current membership → `409` (the ≥1 floor, §4.17).
 @Injectable()
 export class RemoveDepartmentMembershipAction {
+  private readonly logger = new Logger(RemoveDepartmentMembershipAction.name);
+
   constructor(private readonly orgRelationships: OrgRelationshipService) {}
 
   async execute(
@@ -34,5 +37,9 @@ export class RemoveDepartmentMembershipAction {
         'employee must belong to at least one department; assign another before removing this one',
       );
     }
+
+    this.logger.log(
+      `department membership removed: ${subjectId} from department ${departmentId} (by ${viewerId})`,
+    );
   }
 }

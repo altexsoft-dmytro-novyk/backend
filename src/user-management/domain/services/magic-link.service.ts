@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
   AUTH_USER_LOOKUP_PORT,
   type AuthUserLookupPort,
@@ -41,6 +41,10 @@ export interface EstablishedSession {
  */
 @Injectable()
 export class MagicLinkService {
+  // Operator-only diagnostics. Never the address — a log line must not become
+  // the enumeration oracle NFR-3 keeps out of the HTTP response.
+  private readonly logger = new Logger(MagicLinkService.name);
+
   constructor(
     @Inject(AUTH_USER_LOOKUP_PORT)
     private readonly users: AuthUserLookupPort,
@@ -64,6 +68,9 @@ export class MagicLinkService {
     const workEmail = rawEmail.trim().toLowerCase();
     const user = await this.users.findActiveByWorkEmail(workEmail);
     if (!user) {
+      this.logger.debug(
+        'magic-link requested for an unknown or inactive address — no-op',
+      );
       return;
     }
 
@@ -72,6 +79,7 @@ export class MagicLinkService {
     const expiresAt = new Date(Date.now() + this.ttlMinutes * 60_000);
 
     await this.tokens.mint({ userId: user.id, tokenHash, expiresAt });
+    this.logger.log(`magic-link minted and dispatched for user ${user.id}`);
 
     // NFR-3: a delivery failure must not crash the request or leak an
     // account-existence signal. The real adapter swallows transport errors
@@ -95,25 +103,42 @@ export class MagicLinkService {
   async consume(rawToken: string): Promise<EstablishedSession | null> {
     const tokenHash = createHash('sha256').update(rawToken).digest('hex');
     const record = await this.tokens.findByHash(tokenHash);
-    if (!record || record.consumedAt) {
+    if (!record) {
+      this.logger.debug('magic-link consume denied: no matching token');
+      return null;
+    }
+    if (record.consumedAt) {
+      this.logger.debug(
+        `magic-link consume denied: already consumed (user ${record.userId})`,
+      );
       return null;
     }
     if (record.expiresAt.getTime() <= Date.now()) {
       // Expiry is not consumption — leave `consumedAt` null (um-auth-04).
+      this.logger.debug(
+        `magic-link consume denied: expired (user ${record.userId})`,
+      );
       return null;
     }
 
     const owner = await this.users.findActiveById(record.userId);
     if (!owner) {
+      this.logger.debug(
+        `magic-link consume denied: owner inactive (user ${record.userId})`,
+      );
       return null;
     }
 
     const consumed = await this.tokens.markConsumed(record.id);
     if (!consumed) {
+      this.logger.debug(
+        `magic-link consume denied: lost the single-use race (user ${record.userId})`,
+      );
       return null;
     }
 
     const issued = this.sessionTokens.issue(owner.id);
+    this.logger.log(`session established for user ${owner.id}`);
     return {
       sessionToken: issued.token,
       tokenType: 'Bearer',

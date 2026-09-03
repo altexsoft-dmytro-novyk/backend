@@ -109,6 +109,11 @@ export class DepartureWorkerService
       if (outcome === 'applied') applied += 1;
       else if (outcome === 'failed') failed += 1;
     }
+    if (claimed.length > 0) {
+      this.logger.log(
+        `departure worker batch: claimed=${claimed.length} applied=${applied} failed=${failed}`,
+      );
+    }
     return { claimed: claimed.length, applied, failed };
   }
 
@@ -224,7 +229,7 @@ export class DepartureWorkerService
   ): Promise<ApplyOutcome> {
     let attemptsBefore = 0;
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      const outcome = await this.prisma.$transaction(async (tx) => {
         const rows = await tx.$queryRawUnsafe<
           Array<{
             userId: string;
@@ -313,6 +318,10 @@ export class DepartureWorkerService
         if (marked === 0) return 'stale';
         return 'applied';
       });
+      if (outcome === 'applied') {
+        this.logger.log(`departure ${departureId} applied`);
+      }
+      return outcome;
     } catch (error) {
       await this.moveToRetryWait(
         departureId,

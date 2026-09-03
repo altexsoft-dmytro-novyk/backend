@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import type { User } from '../../../generated/prisma/client';
@@ -12,6 +13,8 @@ import type { UpdateUserDto } from '../dtos/update-user.dto';
 
 @Injectable()
 export class EditUserAction {
+  private readonly logger = new Logger(EditUserAction.name);
+
   constructor(
     private readonly userService: UserService,
     private readonly careerTimeline: CareerTimelineService,
@@ -67,6 +70,11 @@ export class EditUserAction {
       );
     }
 
-    return this.userService.update(id, patch, systemEvents);
+    const updated = await this.userService.update(id, patch, systemEvents);
+    this.logger.log(
+      `user ${id} updated by ${viewerId} (fields: ${Object.keys(patch).join(', ') || 'none'}` +
+        `${systemEvents.length > 0 ? '; position_change event written' : ''})`,
+    );
+    return updated;
   }
 }

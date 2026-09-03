@@ -1,6 +1,7 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { OrgRelationshipService } from '../../domain/services/org-relationship.service';
@@ -24,6 +25,8 @@ export interface DepartmentMembershipResponse {
 // is in the repository; this action owns only the outcome → HTTP mapping.
 @Injectable()
 export class AddDepartmentMembershipAction {
+  private readonly logger = new Logger(AddDepartmentMembershipAction.name);
+
   constructor(private readonly orgRelationships: OrgRelationshipService) {}
 
   async execute(
@@ -56,6 +59,10 @@ export class AddDepartmentMembershipAction {
     }
 
     const { membership } = result;
+    this.logger.log(
+      `department membership added: ${subjectId} → department ${dto.departmentId}` +
+        `${dto.fromDepartmentId ? ` (moved from ${dto.fromDepartmentId})` : ''} (by ${viewerId})`,
+    );
     return {
       id: membership.id,
       userId: membership.userId,

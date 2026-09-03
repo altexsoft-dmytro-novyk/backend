@@ -1,6 +1,7 @@
 import {
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { CareerTimelineAccessService } from '../../domain/services/career-timeline-access.service';
@@ -14,6 +15,8 @@ import { CareerTimelineService } from '../../domain/services/career-timeline.ser
 // token is produced by the class-level `SessionGuard`.
 @Injectable()
 export class SoftDeleteUserEventAction {
+  private readonly logger = new Logger(SoftDeleteUserEventAction.name);
+
   constructor(
     private readonly careerTimeline: CareerTimelineService,
     private readonly careerTimelineAccess: CareerTimelineAccessService,
@@ -41,5 +44,8 @@ export class SoftDeleteUserEventAction {
     if (!softDeleted) {
       throw new NotFoundException();
     }
+    this.logger.log(
+      `timeline event ${eventId} soft-deleted from ${targetUserId} by ${viewerId}`,
+    );
   }
 }

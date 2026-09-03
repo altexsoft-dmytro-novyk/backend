@@ -20,6 +20,13 @@ import { RunFixtures, bearer, bootstrapTestApp } from './fixtures';
  * internal routing key for the PATCH-gate branch. There is NO dependency on a
  * `user-management:edit` kernel seed.
  *
+ * UPDATE 2026-09-03: `access-control-facade.adapter.ts` `canEditS1` now ALSO
+ * honours a live `user-management:edit` FR grant as an OR-override on the base
+ * section gate (what `scripts/dev-grant-root.ts` relies on). It only widens — a
+ * `'none'` section result (deactivated / unknown target) stays closed. Covered
+ * by the "OR-override" describe block below; a full rewrite of the per-section
+ * predicates is tracked in the access-control deferred-work.
+ *
  * STATE (per group):
  *   - UMAC-07 — GREEN. `access-control-facade.adapter.ts` `isAllowedForTarget`'s
  *     `EDIT_USER_FEATURE` branch returns `canAccessSection('S1') === 'write'`, so
@@ -190,6 +197,70 @@ describe('UMAC-2 Stage 2 — PATCH / PUT photo write-path gates (e2e)', () => {
         data: { position: 'Senior Engineer' },
         canEdit: true,
       });
+    });
+  });
+
+  // The `user-management:edit` FR-grant OR-override on the S1 edit gate (added
+  // 2026-09-03). This is NOT Variant A — it is the provisional widening that
+  // `scripts/dev-grant-root.ts` relies on to give a local root `canEdit` on
+  // every card. `access-control-facade.adapter.ts` `canEditS1`: a live
+  // `user-management:edit` grant passes the gate for any target section access
+  // already resolves to `read`/`write`, but NEVER for a `'none'` target
+  // (deactivated / unknown). A full rewrite of the per-section predicates is
+  // tracked in the access-control deferred-work
+  // ("Generalise section-access authorisation").
+  describe('S1 edit · `user-management:edit` FR grant is an OR-override on the section gate', () => {
+    it('grant holder with no reporting/PP edge PATCHes an active card → 200, persists, canEdit:true', async () => {
+      const editor = await fx.user('umac07-fr-editor', { firstName: 'Editor' });
+      const target = await fx.user('umac07-fr-target', { city: 'Krakow' });
+      // editor is only `colleague` over target → canAccessSection('S1') === 'read'.
+      await fx.grantFunctionalRole(editor.id, ['user-management:edit']);
+
+      const res = await patch(target.id, editor.id, { city: 'Berlin' });
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ city: 'Berlin' });
+
+      const readBack = await getUser(target.id, editor.id);
+      expect(readBack.body).toMatchObject({
+        data: { city: 'Berlin' },
+        canEdit: true,
+      });
+    });
+
+    it('grant holder edits their OWN card (self, no edge) → 200, canEdit:true', async () => {
+      const editor = await fx.user('umac07-fr-self', { city: 'Krakow' });
+      await fx.grantFunctionalRole(editor.id, ['user-management:edit']);
+
+      const res = await patch(editor.id, editor.id, { city: 'Gdansk' });
+      expect(res.status).toBe(200);
+
+      const readBack = await getUser(editor.id, editor.id);
+      expect(readBack.body).toMatchObject({
+        data: { city: 'Gdansk' },
+        canEdit: true,
+      });
+    });
+
+    it('the override never widens past section access — grant holder PATCHing a DEACTIVATED target → 403', async () => {
+      const editor = await fx.user('umac07-fr-inact-editor', {
+        firstName: 'Editor',
+      });
+      const target = await fx.user('umac07-fr-inact-target', {
+        city: 'Krakow',
+        isActive: false,
+      });
+      await fx.grantFunctionalRole(editor.id, ['user-management:edit']);
+      // canAccessSection('S1', <inactive>) === 'none' → closed for everyone,
+      // grant or not.
+
+      const res = await patch(target.id, editor.id, { city: 'Berlin' });
+      expect(res.status).toBe(403);
+
+      const row = await testApp.prisma.user.findUnique({
+        where: { id: target.id },
+        select: { city: true },
+      });
+      expect(row?.city).toBe('Krakow');
     });
   });
 

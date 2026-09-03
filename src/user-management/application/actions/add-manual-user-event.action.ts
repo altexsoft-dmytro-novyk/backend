@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { CareerTimelineAccessService } from '../../domain/services/career-timeline-access.service';
 import { CareerTimelineService } from '../../domain/services/career-timeline.service';
 import { UserService } from '../../domain/services/user.service';
@@ -16,6 +16,8 @@ import {
 // token is produced by the class-level `SessionGuard`.
 @Injectable()
 export class AddManualUserEventAction {
+  private readonly logger = new Logger(AddManualUserEventAction.name);
+
   constructor(
     private readonly careerTimeline: CareerTimelineService,
     private readonly careerTimelineAccess: CareerTimelineAccessService,
@@ -50,6 +52,10 @@ export class AddManualUserEventAction {
       details: dto.details ?? {},
       createdBy: viewerId,
     });
+
+    this.logger.log(
+      `manual timeline event "${dto.type}" added to ${targetId} by ${viewerId} (event ${created.id})`,
+    );
 
     // Bare resource — Nest returns `201` for a POST by default. NOT the
     // `{ data, canEdit }` envelope (matches bare-user `PATCH /users/:id`).

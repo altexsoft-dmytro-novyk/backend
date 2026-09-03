@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -24,6 +25,8 @@ import {
 // decision and the same-transaction edge+journal write are in the repository.
 @Injectable()
 export class ChangePeoplePartnerAction {
+  private readonly logger = new Logger(ChangePeoplePartnerAction.name);
+
   constructor(
     private readonly orgRelationships: OrgRelationshipService,
     private readonly userService: UserService,
@@ -74,6 +77,9 @@ export class ChangePeoplePartnerAction {
       );
     }
 
+    this.logger.log(
+      `people partner set: ${employeeId} → ${dto.targetId} (by ${viewerId}, relationship ${result.relationship.id})`,
+    );
     return toRelationshipResponse(result.relationship);
   }
 }

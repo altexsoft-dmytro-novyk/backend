@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
   POPULATION_IMPORT_REPOSITORY_PORT,
   PopulationImportRowError,
@@ -74,6 +74,8 @@ type ParseOutcome =
  */
 @Injectable()
 export class PopulationImportService {
+  private readonly logger = new Logger(PopulationImportService.name);
+
   constructor(
     @Inject(POPULATION_IMPORT_REPOSITORY_PORT)
     private readonly repository: PopulationImportRepositoryPort,
@@ -83,6 +85,9 @@ export class PopulationImportService {
     rawRows: RawPopulationRow[],
     operatorId: string,
   ): Promise<ImportSummary> {
+    this.logger.log(
+      `population import started: ${rawRows.length} row(s) by operator ${operatorId}`,
+    );
     const summary: ImportSummary = {
       created: 0,
       updated: 0,
@@ -92,28 +97,30 @@ export class PopulationImportService {
     };
     const processedEmails = new Set<string>();
 
+    const recordSkip = (
+      atLine: number,
+      email: string | null,
+      reason: string,
+    ): void => {
+      summary.skipped += 1;
+      summary.errors.push({ line: atLine, email, reason });
+      this.logger.warn(
+        `population import: row ${atLine} skipped (${email ?? 'no email'}): ${reason}`,
+      );
+    };
+
     let line = 0;
     for (const raw of rawRows) {
       line += 1;
 
       const parsed = this.parseRow(raw, line);
       if (!parsed.ok) {
-        summary.skipped += 1;
-        summary.errors.push({
-          line,
-          email: parsed.email,
-          reason: parsed.reason,
-        });
+        recordSkip(line, parsed.email, parsed.reason);
         continue;
       }
 
       if (processedEmails.has(parsed.row.workEmail)) {
-        summary.skipped += 1;
-        summary.errors.push({
-          line,
-          email: parsed.row.workEmail,
-          reason: 'email already exists',
-        });
+        recordSkip(line, parsed.row.workEmail, 'email already exists');
         continue;
       }
 
@@ -124,18 +131,20 @@ export class PopulationImportService {
         else summary.updated += 1;
         if (result.departmentCreated) summary.departmentsCreated += 1;
       } catch (error) {
-        summary.skipped += 1;
-        summary.errors.push({
+        recordSkip(
           line,
-          email: parsed.row.workEmail,
-          reason:
-            error instanceof PopulationImportRowError
-              ? error.message
-              : 'row import failed',
-        });
+          parsed.row.workEmail,
+          error instanceof PopulationImportRowError
+            ? error.message
+            : 'row import failed',
+        );
       }
     }
 
+    this.logger.log(
+      `population import finished: created=${summary.created} updated=${summary.updated} ` +
+        `departmentsCreated=${summary.departmentsCreated} skipped=${summary.skipped}`,
+    );
     return summary;
   }
 

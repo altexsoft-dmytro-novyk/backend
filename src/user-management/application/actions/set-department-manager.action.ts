@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -26,6 +27,8 @@ export interface DepartmentManagerResponse {
 // before the transaction opens. `stale` (optimistic predicate) → `409`.
 @Injectable()
 export class SetDepartmentManagerAction {
+  private readonly logger = new Logger(SetDepartmentManagerAction.name);
+
   constructor(
     private readonly orgRelationships: OrgRelationshipService,
     private readonly userService: UserService,
@@ -82,6 +85,9 @@ export class SetDepartmentManagerAction {
       );
     }
 
+    this.logger.log(
+      `department manager set: department ${deptId} → ${dto.managerUserId} (by ${viewerId})`,
+    );
     return { departmentId: deptId, managerUserId: dto.managerUserId };
   }
 }

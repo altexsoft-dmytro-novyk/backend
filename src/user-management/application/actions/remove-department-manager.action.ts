@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { OrgRelationshipService } from '../../domain/services/org-relationship.service';
 
 // Story 4.3 — the `DELETE /departments/:deptId/manager` handler. Removes the
@@ -7,6 +7,8 @@ import { OrgRelationshipService } from '../../domain/services/org-relationship.s
 // (`after: null`). No current manager (or unknown department) → `404`.
 @Injectable()
 export class RemoveDepartmentManagerAction {
+  private readonly logger = new Logger(RemoveDepartmentManagerAction.name);
+
   constructor(private readonly orgRelationships: OrgRelationshipService) {}
 
   async execute(viewerId: string, deptId: string): Promise<void> {
@@ -17,5 +19,8 @@ export class RemoveDepartmentManagerAction {
     if (result.outcome === 'not-found') {
       throw new NotFoundException();
     }
+    this.logger.log(
+      `department manager removed: department ${deptId} (by ${viewerId})`,
+    );
   }
 }

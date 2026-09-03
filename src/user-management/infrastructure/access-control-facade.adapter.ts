@@ -20,9 +20,10 @@ import type { IdentityCardAccessPort } from '../domain/interfaces/identity-card-
 // target is entitled to the S1 identity card (§3.2). An empty audience — which
 // on this route means the target is not an active `User` — denies (guard → 403).
 const READ_USER_FEATURE = 'user-management:read';
-// The `PATCH /users/:id` gate. Variant A (product decision 2026-09-02): no
-// separate functional permission — the whole gate is `canAccessSection('S1')
-// === 'write'` (reporting-line manager or assigned People Partner).
+// The `PATCH /users/:id` gate (and the `canEdit` hint). Variant A base gate is
+// `canAccessSection('S1') === 'write'` (reporting-line manager or assigned
+// People Partner); holding this key as a live FR grant is an OR override on top
+// — see `canEditS1`.
 const EDIT_USER_FEATURE = 'user-management:edit';
 // The identity-card section string the kernel supports for S1 (ACM-5).
 const S1_SECTION = 'S1';
@@ -54,16 +55,7 @@ export class AccessControlFacadeAdapter
     }
 
     if (feature === EDIT_USER_FEATURE) {
-      // Variant A: identity-card edit is gated by S1 write-access alone — the
-      // reporting-line manager or the assigned People Partner. No functional
-      // permission layer on this section (§2.2's functional half is not applied
-      // here; a narrower FR grant can be introduced later via the roles admin).
-      const sectionAccess = await this.facade.canAccessSection(
-        userId,
-        S1_SECTION,
-        targetUserId,
-      );
-      return sectionAccess === 'write';
+      return this.canEditS1(userId, targetUserId);
     }
 
     // PUT /users/:id/photo is Self-only and gated by SelfOnlyGuard, not here.
@@ -72,15 +64,32 @@ export class AccessControlFacadeAdapter
   }
 
   // The `canEdit` hint on `GET /users/:id`, and the gate on `PATCH /users/:id`.
-  //
-  // Product decision 2026-09-02 (Variant A — the identity card has no separate
-  // functional permission; audience write-access is the whole gate): the
-  // manager on this person's reporting line, or their assigned People Partner,
-  // may edit the identity card. That is exactly `canAccessSection('S1') ===
-  // 'write'`. §2.2's functional half is not applied to this section — HR Admin
-  // can introduce a narrower FR grant later through the roles admin screen if
-  // finer control is ever needed.
   async canEditIdentityCard(
+    viewerId: string,
+    targetUserId: string,
+  ): Promise<boolean> {
+    return this.canEditS1(viewerId, targetUserId);
+  }
+
+  // The identity-card (S1) edit decision, shared by the `PATCH /users/:id` gate
+  // and the read-only `canEdit` hint.
+  //
+  // Base gate (product decision 2026-09-02, "Variant A"): audience write-access
+  // — the manager on this person's reporting line, or their assigned People
+  // Partner. That is `canAccessSection('S1') === 'write'`.
+  //
+  // OR override: a live `user-management:edit` functional permission widens the
+  // base gate (e.g. the seeded root HR Admin, via `scripts/dev-grant-root.ts`).
+  // It only ever WIDENS — it never opens an edit that section access itself
+  // denies: a `'none'` result here (a deactivated or unknown target) stays
+  // closed for every viewer, grant or not. So a holder may edit any *active*
+  // card, their own included, without a reporting-line or People-Partner edge.
+  //
+  // NOTE: the composition here (OR) is provisional — see the access-control
+  // deferred-work entry "Generalise section-access authorisation" for the
+  // planned rewrite (one section-parameterised gate; §2.2 dual-gate vs Variant A
+  // decided centrally).
+  private async canEditS1(
     viewerId: string,
     targetUserId: string,
   ): Promise<boolean> {
@@ -89,6 +98,13 @@ export class AccessControlFacadeAdapter
       S1_SECTION,
       targetUserId,
     );
-    return sectionAccess === 'write';
+    if (sectionAccess === 'write') {
+      return true;
+    }
+    if (sectionAccess === 'none') {
+      // Deactivated / unknown target — never editable, override or not.
+      return false;
+    }
+    return this.facade.isAllowed(viewerId, EDIT_USER_FEATURE);
   }
 }

@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import {
@@ -21,6 +22,8 @@ import type { RequestWithSession } from './session.guard';
 // unchecked (session-only routes, if any are ever added).
 @Injectable()
 export class AccessControlGuard implements CanActivate {
+  private readonly logger = new Logger(AccessControlGuard.name);
+
   constructor(
     private readonly reflector: Reflector,
     @Inject(ACCESS_CONTROL_PORT)
@@ -49,6 +52,10 @@ export class AccessControlGuard implements CanActivate {
         );
 
     if (!isAllowed) {
+      this.logger.warn(
+        `access denied: user ${request.session.userId} lacks "${meta.feature}"` +
+          `${meta.targetScoped ? ` on target ${request.params.id as string}` : ''} → 403`,
+      );
       throw new ForbiddenException();
     }
     return true;

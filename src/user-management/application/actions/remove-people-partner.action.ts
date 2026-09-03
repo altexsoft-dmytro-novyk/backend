@@ -1,6 +1,7 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { OrgRelationshipService } from '../../domain/services/org-relationship.service';
@@ -15,6 +16,8 @@ import { PeoplePartnerQueryDto } from '../dtos/people-partner-query.dto';
 // together in the repository.
 @Injectable()
 export class RemovePeoplePartnerAction {
+  private readonly logger = new Logger(RemovePeoplePartnerAction.name);
+
   constructor(private readonly orgRelationships: OrgRelationshipService) {}
 
   async execute(
@@ -36,5 +39,9 @@ export class RemovePeoplePartnerAction {
         'the current people partner does not match expectedCurrentTargetId',
       );
     }
+
+    this.logger.log(
+      `people partner removed for ${employeeId} (by ${viewerId})`,
+    );
   }
 }

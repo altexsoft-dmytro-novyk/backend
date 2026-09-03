@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { uuidv7 } from 'uuidv7';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -38,6 +38,7 @@ const INTERIM_ROOT_EMAIL_PREFIX = 'interim-root-';
  */
 @Injectable()
 export class JwtSessionResolverAdapter implements SessionResolverPort {
+  private readonly logger = new Logger(JwtSessionResolverAdapter.name);
   private readonly jwtSecret: string;
   private readonly allowTestSessionTokens: boolean;
 
@@ -97,6 +98,9 @@ export class JwtSessionResolverAdapter implements SessionResolverPort {
     );
     if (rows.length > 0) {
       this.departureMetrics.recordRequestTimeCutoffDenial();
+      this.logger.warn(
+        `session denied by effective-departure cutoff for user ${session.userId}`,
+      );
       return null;
     }
     return session;

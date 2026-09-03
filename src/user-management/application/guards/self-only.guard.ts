@@ -3,6 +3,7 @@ import {
   type ExecutionContext,
   ForbiddenException,
   Injectable,
+  Logger,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { SELF_ONLY_KEY } from '../decorators/self-only.decorator';
@@ -16,6 +17,8 @@ import type { RequestWithSession } from './session.guard';
 // `@SelfOnly()` metadata passes straight through.
 @Injectable()
 export class SelfOnlyGuard implements CanActivate {
+  private readonly logger = new Logger(SelfOnlyGuard.name);
+
   constructor(private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
@@ -32,6 +35,9 @@ export class SelfOnlyGuard implements CanActivate {
     const targetId = request.params.id;
 
     if (!viewerId || viewerId !== targetId) {
+      this.logger.warn(
+        `self-only denied: ${viewerId ?? 'anonymous'} attempted ${String(targetId)} → 403`,
+      );
       throw new ForbiddenException();
     }
     return true;

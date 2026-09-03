@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { OrgRelationshipService } from '../../domain/services/org-relationship.service';
 
 // Story 4.1 — the `DELETE /users/:id/relationships/:relationshipId` handler. The
@@ -10,6 +10,8 @@ import { OrgRelationshipService } from '../../domain/services/org-relationship.s
 // `AccessJournal` row commit together.
 @Injectable()
 export class RevokeManagerAction {
+  private readonly logger = new Logger(RevokeManagerAction.name);
+
   constructor(private readonly orgRelationships: OrgRelationshipService) {}
 
   async execute(
@@ -26,5 +28,8 @@ export class RevokeManagerAction {
     if (!revoked) {
       throw new NotFoundException();
     }
+    this.logger.log(
+      `manager relationship ${relationshipId} revoked for ${subjectId} (by ${viewerId})`,
+    );
   }
 }

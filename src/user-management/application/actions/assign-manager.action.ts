@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
 } from '@nestjs/common';
 import { OrgRelationshipService } from '../../domain/services/org-relationship.service';
 import { DepartureService } from '../../domain/services/departure.service';
@@ -19,6 +20,8 @@ import {
 // UNIQUE surfaces from the repository as a `ConflictException` (409, DEC-UM-005).
 @Injectable()
 export class AssignManagerAction {
+  private readonly logger = new Logger(AssignManagerAction.name);
+
   constructor(
     private readonly orgRelationships: OrgRelationshipService,
     private readonly departures: DepartureService,
@@ -48,6 +51,9 @@ export class AssignManagerAction {
       targetId: dto.targetId,
       actorId: viewerId,
     });
+    this.logger.log(
+      `manager assigned: ${subjectId} reports to ${dto.targetId} (by ${viewerId}, relationship ${created.id})`,
+    );
 
     return toRelationshipResponse(created);
   }

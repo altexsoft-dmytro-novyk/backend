@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { BUSINESS_TIME_ZONE } from '../interfaces/business-time-zone.token';
 import {
   DEPARTURE_EXECUTOR_PORT,
@@ -55,6 +55,8 @@ export type RecordDepartureOutcome =
 // adapter class. HTTP status mapping lives in the actions.
 @Injectable()
 export class DepartureService {
+  private readonly logger = new Logger(DepartureService.name);
+
   constructor(
     @Inject(DEPARTURE_REPOSITORY_PORT)
     private readonly repository: DepartureRepositoryPort,
@@ -66,11 +68,15 @@ export class DepartureService {
 
   /** `POST /users/:id/departures/:departureId/retry` — delegates to the worker
    *  seam (claim/lease/fencing stays in `infrastructure/`). */
-  retryDeparture(
+  async retryDeparture(
     userId: string,
     departureId: string,
   ): Promise<RetryDepartureOutcome> {
-    return this.executor.requestRetry(userId, departureId);
+    const outcome = await this.executor.requestRetry(userId, departureId);
+    this.logger.log(
+      `departure retry requested for user ${userId} (departure ${departureId}) → ${outcome}`,
+    );
+    return outcome;
   }
 
   async recordDeparture(
@@ -89,17 +95,27 @@ export class DepartureService {
       command.idempotencyKey,
     );
     if (existing) {
-      return existing.requestHash === requestHash
-        ? { kind: 'ok', view: this.toView(existing) }
-        : {
-            kind: 'conflict',
-            body: { error: 'idempotency_key_payload_mismatch' },
-          };
+      if (existing.requestHash === requestHash) {
+        this.logger.log(
+          `departure record: idempotent replay for user ${command.userId} (departure ${existing.id})`,
+        );
+        return { kind: 'ok', view: this.toView(existing) };
+      }
+      this.logger.warn(
+        `departure record rejected: idempotency key payload mismatch for user ${command.userId}`,
+      );
+      return {
+        kind: 'conflict',
+        body: { error: 'idempotency_key_payload_mismatch' },
+      };
     }
 
     // Blocker check BEFORE any write.
     const blockers = await this.repository.loadPlatformBlockers(command.userId);
     if (hasPlatformBlockers(blockers)) {
+      this.logger.warn(
+        `departure record blocked by responsibilities for user ${command.userId}`,
+      );
       return {
         kind: 'conflict',
         body: buildBlockedResponse(command.userId, blockers),
@@ -111,6 +127,9 @@ export class DepartureService {
       command.userId,
     );
     if (nonApplied) {
+      this.logger.warn(
+        `departure record rejected: one already scheduled for user ${command.userId}`,
+      );
       return {
         kind: 'conflict',
         body: { error: 'departure_already_scheduled' },
@@ -131,7 +150,14 @@ export class DepartureService {
 
     switch (result.outcome) {
       case 'created':
+        this.logger.log(
+          `departure recorded for user ${command.userId} (departure ${result.record.id}, effective ${command.effectiveDate}, by ${command.createdBy})`,
+        );
+        return { kind: 'ok', view: this.toView(result.record) };
       case 'idempotency_replay':
+        this.logger.log(
+          `departure record: idempotent replay for user ${command.userId} (departure ${result.record.id})`,
+        );
         return { kind: 'ok', view: this.toView(result.record) };
       case 'idempotency_mismatch':
         return {
@@ -154,13 +180,24 @@ export class DepartureService {
     return record ? this.toView(record) : null;
   }
 
-  reparent(command: {
+  async reparent(command: {
     userId: string;
     targetId: string;
     actorId: string;
     expectedBlockerVersion: string;
   }): Promise<ReparentResult> {
-    return this.repository.reparentPlatformBlockers(command);
+    const result = await this.repository.reparentPlatformBlockers(command);
+    if (result.outcome === 'stale') {
+      this.logger.warn(
+        `departure re-parent rejected: stale blocker version for user ${command.userId}`,
+      );
+    } else {
+      this.logger.log(
+        `departure blockers re-parented for user ${command.userId} onto ${command.targetId} by ${command.actorId} ` +
+          `(directReports=${result.counts.directReports} departmentManager=${result.counts.departmentManager} peoplePartner=${result.counts.peoplePartnerAssignments})`,
+      );
+    }
+    return result;
   }
 
   hasNonAppliedDeparture(userId: string): Promise<boolean> {
