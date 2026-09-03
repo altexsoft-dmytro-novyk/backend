@@ -1,5 +1,5 @@
 <!-- bmad:context -->
-<!-- Verified 2026-09-02 against 08931ad. Managed by bmad-project-context; edits inside this block are replaced on refresh. Keep anything you want preserved outside the markers. -->
+<!-- Verified 2026-09-03 against f091d44. Managed by bmad-project-context; edits inside this block are replaced on refresh. Keep anything you want preserved outside the markers. -->
 
 ## backend (NestJS API)
 
