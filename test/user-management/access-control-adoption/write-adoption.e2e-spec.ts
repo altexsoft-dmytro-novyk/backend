@@ -115,18 +115,18 @@ describe('UMAC-2 Stage 2 — PATCH / PUT photo write-path gates (e2e)', () => {
       expect(readBack.body).toMatchObject({ data: { position: 'Engineer' } });
     });
 
-    it('UMAC-07 Test 5 — unresolved session (Bearer <token:Bob>) PATCH → 403', async () => {
+    it('UMAC-07 Test 5 — unresolved session (Bearer <token:Bob>) PATCH → 401', async () => {
       const target = await fx.user('umac07-target-u', { position: 'Engineer' });
-      // `Bearer <token:Bob>` → { userId: 'Bob' } → no active User → empty
-      // audience → canAccessSection returns 'none' → the edit gate denies.
-      // Write-path denial is 403 (interim resolver is lax; per umac-05 the
-      // target end state once the real magic-link middleware lands is 401).
+      // `Bearer <token:Bob>` → persona 'Bob' matches no active User → the
+      // session does not resolve → `401` (unresolved session), before any
+      // audience/gate check. Epic 2's real resolver replaced the lax interim
+      // one that used to surface this as `403`.
 
       const res = await request(testApp.app.getHttpServer())
         .patch(`/users/${target.id}`)
         .set('authorization', 'Bearer <token:Bob>')
         .send({ position: 'Ghost Engineer' });
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(401);
     });
 
     it('UMAC-07 Test 1 — reporting-line manager PATCHes a report’s S1 → 200, change persists', async () => {

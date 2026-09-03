@@ -390,17 +390,16 @@ describe('Epic 1 · Story 1.3 — Self Uploads Own Photo · PUT /users/:id/photo
       expect(await rowPhoto(alice.id)).toBeNull();
     });
 
-    it('valid-shape token, unresolved principal → 403 under the interim resolver (target end state 401, Epic 2)', async () => {
+    it('valid-shape token, unresolved principal → 401 (session never resolves)', async () => {
       const alice = await fx.user('photo04c-alice', {
         firstName: 'Alice',
         photo: null,
       });
-      // The token parses to `{ userId: <uuid> }`; the Self identity check
-      // `userId === alice.id` is false → 403 today. Post-Epic-2 the magic-link
-      // middleware rejects the unresolved principal at the session layer → 401.
+      // A `<token:<uuid>>` for a uuid that matches no active `User` — Epic 2's
+      // real resolver returns `null`, so the session guard rejects with `401`
+      // before the Self identity check ever runs.
       const res = await putPhoto(alice.id, bearer(uuidv7()), jpeg('x.jpg'));
-      expect([401, 403]).toContain(res.status);
-      expect(res.status).toBe(403); // interim-resolver disposition, pinned
+      expect(res.status).toBe(401);
       expect(await rowPhoto(alice.id)).toBeNull();
     });
   });

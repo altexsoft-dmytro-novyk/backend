@@ -25,7 +25,13 @@ export const envValidationSchema = Joi.object({
   PORT: Joi.number().port().default(3001),
   CORS_ORIGIN: Joi.string().uri().default('http://localhost:4200'),
   DATABASE_URL: Joi.string().required(),
-  ROOT_WORK_EMAIL: Joi.string().email().default('root@company.example'),
+  // `tlds:false` — the codebase uses RFC-2606 `*.example` placeholders (and CI
+  // has no real mailbox), so validate the `local@domain.tld` shape but not the
+  // TLD against the IANA list (`.example` is not on it). A default value is
+  // trusted unvalidated, so this only bites when the var is set in `.env`.
+  ROOT_WORK_EMAIL: Joi.string()
+    .email({ tlds: { allow: false } })
+    .default('root@company.example'),
   AWS_REGION: Joi.string().default('us-east-1'),
   AWS_S3_BUCKET: Joi.string().default('user-management-photos'),
   // Set for LocalStack (local dev/CI); unset in prod to use real AWS endpoints.
@@ -48,7 +54,9 @@ export const envValidationSchema = Joi.object({
   MAIL_SECURE: Joi.boolean().default(false),
   MAIL_USER: Joi.string().allow('').default(''),
   MAIL_PASSWORD: Joi.string().allow('').default(''),
-  MAIL_FROM: Joi.string().email().default('no-reply@company.example'),
+  // Not `.email()` — nodemailer's `from` also takes the RFC 5322 display-name
+  // form `Name <local@domain>`, which a bare-addr-spec validator rejects.
+  MAIL_FROM: Joi.string().min(3).default('no-reply@company.example'),
 
   // Epic 2 — Magic-Link Authentication (Story 2.2 — session establishment).
   // Session token = stateless HS256 JWT (auth/README decision 10); no `Session`

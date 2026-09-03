@@ -792,7 +792,7 @@ describe('UM-SEED-11 · import unauthenticated → 401', () => {
     expect(res.status).toBe(401);
   });
 
-  it('um-seed-11 Test 3 · valid-shape token, unresolved principal → 401 [RED: interim resolver returns a session for any uuid → 403; stays red until Epic 2 real sessions]', async () => {
+  it('um-seed-11 Test 3 · valid-shape token, unresolved principal → 401 (session never resolves; Epic 2 real resolver)', async () => {
     const { rows } = seedBasicRows();
     const res = await importCsv(
       bearer(`${fx.runId}-nonexistent`),

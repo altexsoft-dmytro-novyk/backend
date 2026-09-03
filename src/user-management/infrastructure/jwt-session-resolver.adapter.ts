@@ -104,11 +104,14 @@ export class JwtSessionResolverAdapter implements SessionResolverPort {
 
   /**
    * The `Bearer <token:<persona>>` fixture convention (docs/test-cases/README.md).
-   * `<persona>` is normally a seeded `User` uuid, resolved as-is; the literal
-   * `Root` persona resolves to whichever seeded row holds `position: 'HR Admin'`,
-   * lazily self-provisioning a stand-in when a suite has no bootstrap of its own
-   * (verbatim from the retired `InterimSessionResolverAdapter`). Any other
-   * non-uuid persona falls through to the access-control deny-by-default.
+   * `<persona>` is a seeded `User` id; the literal `Root` persona resolves to
+   * whichever seeded row holds `position: 'HR Admin'`, lazily self-provisioning
+   * a stand-in when a suite has no bootstrap of its own.
+   *
+   * A persona that does NOT resolve to an active `User` yields `null` — an
+   * **unresolved session** is a `401`, distinct from an authenticated principal
+   * with an empty audience (`403`). `um-seed-11`; the pre-Epic-2 interim adapter
+   * was lax here and let a bogus persona surface as `403`.
    */
   private async resolveTestShorthand(
     authorizationHeader: string,
@@ -122,7 +125,14 @@ export class JwtSessionResolverAdapter implements SessionResolverPort {
       const hrAdmin = await this.resolveOrProvisionRoot();
       return { userId: hrAdmin.id };
     }
-    return { userId: persona };
+    const user = await this.prisma.user.findUnique({
+      where: { id: persona },
+      select: { id: true, isActive: true },
+    });
+    if (!user || !user.isActive) {
+      return null;
+    }
+    return { userId: user.id };
   }
 
   private async resolveOrProvisionRoot(): Promise<{ id: string }> {
