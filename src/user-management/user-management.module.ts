@@ -6,6 +6,8 @@ import { CAREER_TIMELINE_ACCESS_PORT } from './domain/interfaces/career-timeline
 import { ACCESS_JOURNAL_ACCESS_PORT } from './domain/interfaces/access-journal-access.port';
 import { ACCESS_JOURNAL_REPOSITORY_PORT } from './domain/interfaces/access-journal.repository.port';
 import { ORG_RELATIONSHIP_WRITER_PORT } from './domain/interfaces/org-relationship-writer.port';
+import { ORG_RELATIONSHIP_READER_PORT } from './domain/interfaces/org-relationship-reader.port';
+import { ORG_RELATIONSHIPS_READ_ACCESS_PORT } from './domain/interfaces/org-relationships-read-access.port';
 import { DEPARTURE_REPOSITORY_PORT } from './domain/interfaces/departure.repository.port';
 import { DEPARTURE_EXECUTOR_PORT } from './domain/interfaces/departure-executor.port';
 import { DEPARTURE_EFFECTS_PORT } from './domain/interfaces/departure-effects.port';
@@ -35,6 +37,7 @@ import { RevokeManagerAction } from './application/actions/revoke-manager.action
 import { ChangePeoplePartnerAction } from './application/actions/change-people-partner.action';
 import { RemovePeoplePartnerAction } from './application/actions/remove-people-partner.action';
 import { GetAccessJournalAction } from './application/actions/get-access-journal.action';
+import { GetRelationshipsAction } from './application/actions/get-relationships.action';
 import { AddDepartmentMembershipAction } from './application/actions/add-department-membership.action';
 import { RemoveDepartmentMembershipAction } from './application/actions/remove-department-membership.action';
 import { SetDepartmentManagerAction } from './application/actions/set-department-manager.action';
@@ -58,6 +61,8 @@ import { OrgRelationshipService } from './domain/services/org-relationship.servi
 import { DepartureService } from './domain/services/departure.service';
 import { AccessJournalService } from './domain/services/access-journal.service';
 import { AccessJournalAccessService } from './domain/services/access-journal-access.service';
+import { OrgRelationshipReadService } from './domain/services/org-relationship-read.service';
+import { OrgRelationshipsReadAccessService } from './domain/services/org-relationships-read-access.service';
 import { IdentityCardAccessService } from './domain/services/identity-card-access.service';
 import { MagicLinkService } from './domain/services/magic-link.service';
 import { PopulationImportService } from './domain/services/population-import.service';
@@ -72,6 +77,8 @@ import { DepartureMetricsService } from './infrastructure/departure-metrics.serv
 import { NoopDepartureEffectsParticipant } from './infrastructure/noop-departure-effects.participant';
 import { AccessJournalRepository } from './infrastructure/access-journal.repository';
 import { AccessJournalAccessFacadeAdapter } from './infrastructure/access-journal-access-facade.adapter';
+import { OrgRelationshipReaderRepository } from './infrastructure/org-relationship-reader.repository';
+import { OrgRelationshipsReadAccessFacadeAdapter } from './infrastructure/org-relationships-read-access-facade.adapter';
 import { UserEventRepository } from './infrastructure/user-event.repository';
 import { JwtSessionResolverAdapter } from './infrastructure/jwt-session-resolver.adapter';
 import { JwtSessionTokenIssuerAdapter } from './infrastructure/jwt-session-token-issuer.adapter';
@@ -104,6 +111,7 @@ import { UserRepository } from './infrastructure/user.repository';
     ChangePeoplePartnerAction,
     RemovePeoplePartnerAction,
     GetAccessJournalAction,
+    GetRelationshipsAction,
     AddDepartmentMembershipAction,
     RemoveDepartmentMembershipAction,
     SetDepartmentManagerAction,
@@ -125,6 +133,8 @@ import { UserRepository } from './infrastructure/user.repository';
     DepartureService,
     AccessJournalService,
     AccessJournalAccessService,
+    OrgRelationshipReadService,
+    OrgRelationshipsReadAccessService,
     PopulationImportService,
     MagicLinkService,
     AccessControlFacadeAdapter,
@@ -163,6 +173,14 @@ import { UserRepository } from './infrastructure/user.repository';
     {
       provide: ACCESS_JOURNAL_ACCESS_PORT,
       useClass: AccessJournalAccessFacadeAdapter,
+    },
+    {
+      provide: ORG_RELATIONSHIP_READER_PORT,
+      useClass: OrgRelationshipReaderRepository,
+    },
+    {
+      provide: ORG_RELATIONSHIPS_READ_ACCESS_PORT,
+      useClass: OrgRelationshipsReadAccessFacadeAdapter,
     },
     {
       provide: POPULATION_IMPORT_REPOSITORY_PORT,

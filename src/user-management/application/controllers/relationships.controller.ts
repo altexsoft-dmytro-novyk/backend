@@ -16,6 +16,7 @@ import type { DepartmentMembershipResponse } from '../actions/add-department-mem
 import { AssignManagerAction } from '../actions/assign-manager.action';
 import { ChangePeoplePartnerAction } from '../actions/change-people-partner.action';
 import { GetAccessJournalAction } from '../actions/get-access-journal.action';
+import { GetRelationshipsAction } from '../actions/get-relationships.action';
 import { RemoveDepartmentMembershipAction } from '../actions/remove-department-membership.action';
 import { RemovePeoplePartnerAction } from '../actions/remove-people-partner.action';
 import { RevokeManagerAction } from '../actions/revoke-manager.action';
@@ -27,6 +28,7 @@ import { PeoplePartnerQueryDto } from '../dtos/people-partner-query.dto';
 import { UpdatePeoplePartnerDto } from '../dtos/update-people-partner.dto';
 import type { AccessJournalEnvelope } from '../dtos/access-journal.response';
 import type { RelationshipResponse } from '../dtos/relationship.response';
+import type { RelationshipsEnvelope } from '../dtos/relationships-view.response';
 import { AccessControlGuard } from '../guards/access-control.guard';
 import { SessionGuard } from '../guards/session.guard';
 import type { Session } from '../../domain/interfaces/session-resolver.port';
@@ -52,6 +54,7 @@ export class RelationshipsController {
     private readonly changePeoplePartnerAction: ChangePeoplePartnerAction,
     private readonly removePeoplePartnerAction: RemovePeoplePartnerAction,
     private readonly getAccessJournalAction: GetAccessJournalAction,
+    private readonly getRelationshipsAction: GetRelationshipsAction,
     private readonly addDepartmentMembershipAction: AddDepartmentMembershipAction,
     private readonly removeDepartmentMembershipAction: RemoveDepartmentMembershipAction,
   ) {}
@@ -66,6 +69,21 @@ export class RelationshipsController {
     @Body() dto: CreateRelationshipDto,
   ): Promise<RelationshipResponse> {
     return this.assignManagerAction.execute(session.userId, id, dto);
+  }
+
+  // Story 6.1 — read the subject's current `direct` (manager) + `people_partner`
+  // edges. NO `@RequireFeature`: the Gate-B reader check ({reporting,pp}
+  // audience OR `isAllowed('org:relationships:write')`) is enforced inside the
+  // action, exactly like `@Get(':id/access-journal')`. Read-only — no journal
+  // row, no write. Declared here beside its POST sibling; a different HTTP verb
+  // on the same path never collides with the `people-partner` / `:relationshipId`
+  // routes below.
+  @Get(':id/relationships')
+  async findRelationships(
+    @CurrentSession() session: Session,
+    @Param('id') id: string,
+  ): Promise<RelationshipsEnvelope> {
+    return this.getRelationshipsAction.execute(session.userId, id);
   }
 
   // --- Story 4.2 — the fixed-cardinality `people_partner` edge --------------
