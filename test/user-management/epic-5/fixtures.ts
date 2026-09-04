@@ -255,8 +255,12 @@ export async function backdateDepartureDueAt(
  * call its own scenario docs mandate (`um-dep-03` lines 101-102 / 149;
  * `um-dep-04` lines 76 / 96). This is that call, nothing more.
  */
+/** The real worker instance from the running Nest app (AD-3: no override). */
+export const departureWorker = (app: TestApp): DepartureWorkerService =>
+  app.app.get(DepartureWorkerService, { strict: false });
+
 export const runDepartureWorker = (app: TestApp) =>
-  app.app.get(DepartureWorkerService, { strict: false }).processDueDepartures();
+  departureWorker(app).processDueDepartures();
 
 export interface RawEmploymentStatusRow {
   id: string;
