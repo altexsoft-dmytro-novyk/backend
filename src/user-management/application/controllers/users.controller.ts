@@ -18,11 +18,14 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { AddManualUserEventAction } from '../actions/add-manual-user-event.action';
 import { DeactivateUserAction } from '../actions/deactivate-user.action';
 import { EditUserAction } from '../actions/edit-user.action';
 import { GetUserCardAction } from '../actions/get-user-card.action';
+import { GetUserEventsAction } from '../actions/get-user-events.action';
 import { ImportPopulationAction } from '../actions/import-population.action';
 import { ListUsersAction } from '../actions/list-users.action';
+import { SoftDeleteUserEventAction } from '../actions/soft-delete-user-event.action';
 import { UploadUserPhotoAction } from '../actions/upload-user-photo.action';
 import { CurrentSession } from '../decorators/current-session.decorator';
 import {
@@ -31,6 +34,7 @@ import {
 } from '../decorators/require-feature.decorator';
 import { SelfOnly } from '../decorators/self-only.decorator';
 import { ListUsersQueryDto } from '../dtos/list-users-query.dto';
+import { CreateUserEventDto } from '../dtos/create-user-event.dto';
 import { UpdateUserDto } from '../dtos/update-user.dto';
 import { toUserResponse } from '../dtos/user.response';
 import {
@@ -38,6 +42,10 @@ import {
   type UserListItem,
 } from '../dtos/user-list-item.response';
 import type { UserCardResponse } from '../dtos/user-card.response';
+import type {
+  UserEventResponse,
+  UserEventsEnvelope,
+} from '../dtos/user-event.response';
 import { AccessControlGuard } from '../guards/access-control.guard';
 import { SelfOnlyGuard } from '../guards/self-only.guard';
 import { SessionGuard } from '../guards/session.guard';
@@ -86,6 +94,9 @@ export class UsersController {
     private readonly deactivateUserAction: DeactivateUserAction,
     private readonly listUsersAction: ListUsersAction,
     private readonly importPopulationAction: ImportPopulationAction,
+    private readonly getUserEventsAction: GetUserEventsAction,
+    private readonly addManualUserEventAction: AddManualUserEventAction,
+    private readonly softDeleteUserEventAction: SoftDeleteUserEventAction,
   ) {}
 
   @Get()
@@ -145,10 +156,59 @@ export class UsersController {
     return this.getUserCardAction.execute(session.userId, id);
   }
 
+  // Distinct path from `:id` (`:id/events` never collides with `:id`); declared
+  // beside the other `:id` routes. Read gate is INSIDE the action — the
+  // career-timeline S9 read audience excludes colleague, so it is NOT
+  // `@RequireFeatureForTarget` (that is the S1 audience). `SessionGuard`
+  // produces the `401` for a missing/invalid token.
+  @Get(':id/events')
+  async findEvents(
+    @CurrentSession() session: Session,
+    @Param('id') id: string,
+  ): Promise<UserEventsEnvelope> {
+    return this.getUserEventsAction.execute(session.userId, id);
+  }
+
+  // Story 3.2 — manual backfill. Same path family as the GET; write gate is
+  // INSIDE the action (`isAllowed(viewer, 'profile:timeline:write')` alone at
+  // this stage), so NO `@RequireFeature*`. `SessionGuard` gives the `401`.
+  // Nest returns `201` for a POST by default; the body is the bare
+  // `UserEventResponse`, not the `{ data, canEdit }` envelope.
+  @Post(':id/events')
+  async addEvent(
+    @CurrentSession() session: Session,
+    @Param('id') id: string,
+    @Body() dto: CreateUserEventDto,
+  ): Promise<UserEventResponse> {
+    return this.addManualUserEventAction.execute(session.userId, id, dto);
+  }
+
+  // Story 3.3 — soft-delete. Same path family as the GET/POST; the delete gate
+  // is INSIDE the action (`isAllowed(viewer, 'profile:timeline:write')` alone at
+  // this stage), so NO `@RequireFeature*`. `SessionGuard` gives the `401`. No
+  // `PATCH` sibling: the immutable-fact model has no in-place edit — a
+  // correction is this DELETE plus Story 3.2's POST (um-ct-08 asserts the
+  // `PATCH` route stays unbound → `404`).
+  @Delete(':id/events/:eventId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteEvent(
+    @CurrentSession() session: Session,
+    @Param('id') id: string,
+    @Param('eventId') eventId: string,
+  ): Promise<void> {
+    await this.softDeleteUserEventAction.execute(session.userId, id, eventId);
+  }
+
   @Patch(':id')
   @RequireFeatureForTarget(EDIT_USER_FEATURE)
-  async update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
-    return toUserResponse(await this.editUserAction.execute(id, dto));
+  async update(
+    @CurrentSession() session: Session,
+    @Param('id') id: string,
+    @Body() dto: UpdateUserDto,
+  ) {
+    return toUserResponse(
+      await this.editUserAction.execute(id, dto, session.userId),
+    );
   }
 
   // Self-only by identity (FR-9 / Open Decision vi) — NOT a functional

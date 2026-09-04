@@ -9,6 +9,7 @@ import type {
   UserListPage,
   UserRepositoryPort,
 } from '../domain/interfaces/user.repository.port';
+import type { SystemEventInput } from '../domain/interfaces/user-event.repository.port';
 
 @Injectable()
 export class UserRepository implements UserRepositoryPort {
@@ -45,9 +46,33 @@ export class UserRepository implements UserRepositoryPort {
     return this.prisma.user.findUnique({ where: { id } });
   }
 
-  async update(id: string, patch: UserEditPatch): Promise<User> {
+  async update(
+    id: string,
+    patch: UserEditPatch,
+    systemEvents: SystemEventInput[] = [],
+  ): Promise<User> {
     try {
-      return await this.prisma.user.update({ where: { id }, data: patch });
+      if (systemEvents.length === 0) {
+        return await this.prisma.user.update({ where: { id }, data: patch });
+      }
+      // AD-11: the user update and its triggered auto-events commit together or
+      // not at all.
+      return await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.user.update({ where: { id }, data: patch });
+        for (const event of systemEvents) {
+          await tx.userEvent.create({
+            data: {
+              userId: event.userId,
+              type: event.type,
+              eventDate: event.eventDate,
+              details: event.details as Prisma.InputJsonValue,
+              source: event.source,
+              createdBy: event.createdBy,
+            },
+          });
+        }
+        return updated;
+      });
     } catch (error) {
       throw this.mapKnownError(error);
     }
@@ -73,18 +98,24 @@ export class UserRepository implements UserRepositoryPort {
     const currentDismissed: Prisma.EmploymentStatusListRelationFilter = {
       some: { validTo: null, status: 'dismissed' },
     };
-    const employmentStatusWhere: Prisma.UserWhereInput =
+    const where: Prisma.UserWhereInput =
       employmentStatus === 'dismissed'
-        ? { employmentStatuses: currentDismissed }
-        : { NOT: { employmentStatuses: currentDismissed } };
-
-    const where: Prisma.UserWhereInput = {
-      ...identity,
-      // Purged rows are never listed, regardless of any filter (decisions §
-      // "isActive is not a filter").
-      isActive: true,
-      ...employmentStatusWhere,
-    };
+        ? {
+            ...identity,
+            // A dismissed employee stays filterable under
+            // `?employmentStatus=dismissed` even once Epic 5's effective-departure
+            // apply has flipped `User.isActive` to false (um-dep-03 T1). The
+            // current employment fact is the discriminator here, not the
+            // row-retention flag.
+            employmentStatuses: currentDismissed,
+          }
+        : {
+            ...identity,
+            // Purged / departed rows are never on the default list (decisions §
+            // "isActive is not a filter").
+            isActive: true,
+            NOT: { employmentStatuses: currentDismissed },
+          };
 
     const [items, total] = await Promise.all([
       this.prisma.user.findMany({

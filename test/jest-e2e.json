@@ -4,6 +4,7 @@
     "^(\\.{1,2}/.*)\\.js$": "$1"
   },
   "rootDir": ".",
+  "setupFiles": ["<rootDir>/jest.setup-env.ts"],
   "testEnvironment": "node",
   "testRegex": ".e2e-spec.ts$",
   "transform": {

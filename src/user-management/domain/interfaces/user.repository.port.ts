@@ -1,5 +1,6 @@
 import type { EmploymentStatus, User } from '../../../generated/prisma/client';
 import type { UserEntity } from '../entities/user.entity';
+import type { SystemEventInput } from './user-event.repository.port';
 
 export type UserEditPatch = Partial<Omit<UserEntity, 'customFields'>>;
 
@@ -36,7 +37,17 @@ export interface UserRepositoryPort {
   create(props: UserEntity, createdBy: string): Promise<User>;
   findByWorkEmail(workEmail: string): Promise<User | null>;
   findById(id: string): Promise<User | null>;
-  update(id: string, patch: UserEditPatch): Promise<User>;
+  /**
+   * Update `id` with `patch` and, in the SAME transaction, append every
+   * descriptor in `systemEvents` to `user_events` (AD-11 — auto-events commit
+   * atomically with the mutation that triggered them). Omitting `systemEvents`
+   * keeps the plain single-statement update path.
+   */
+  update(
+    id: string,
+    patch: UserEditPatch,
+    systemEvents?: SystemEventInput[],
+  ): Promise<User>;
   deactivate(id: string): Promise<User>;
   list(
     filter: UserListFilter,

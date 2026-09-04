@@ -12,10 +12,11 @@
 // through `IdentityCardAccessService`.
 export interface IdentityCardAccessPort {
   /**
-   * The §2.2 dual gate, read-only: `true` iff the viewer holds the live
-   * `user-management:edit` functional permission AND has `write` section
-   * access to the target's S1 section. `false`-closed for every viewer today
-   * (`user-management:edit` is unseeded).
+   * The identity-card edit decision, read-only. `true` iff the viewer either
+   * holds the live `user-management:edit` functional permission (OR override —
+   * e.g. the seeded root HR Admin), or has `write` section access to the
+   * target's S1 section (Variant A: reporting-line manager or assigned People
+   * Partner). `false`-closed for a viewer who is neither.
    */
   canEditIdentityCard(viewerId: string, targetUserId: string): Promise<boolean>;
 }

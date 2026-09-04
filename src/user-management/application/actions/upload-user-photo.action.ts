@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -10,6 +11,8 @@ import { UserService } from '../../domain/services/user.service';
 
 @Injectable()
 export class UploadUserPhotoAction {
+  private readonly logger = new Logger(UploadUserPhotoAction.name);
+
   constructor(
     private readonly userService: UserService,
     private readonly storeObjectAction: StoreObjectAction,
@@ -37,11 +40,19 @@ export class UploadUserPhotoAction {
         content,
         contentType,
       );
-    } catch {
+    } catch (error) {
+      // Expected transient dependency outage — mapped to 503 below and re-logged
+      // with its stack by `LoggingInterceptor`. Here we add only the domain
+      // context (which user), at `warn`, without a second stack.
+      this.logger.warn(
+        `photo storage unavailable for user ${id}: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
       throw new ServiceUnavailableException(
         'photo storage is temporarily unavailable',
       );
     }
+    this.logger.log(`photo stored for user ${id} (key ${key})`);
     return this.userService.update(id, { photo: storedRef });
   }
 }

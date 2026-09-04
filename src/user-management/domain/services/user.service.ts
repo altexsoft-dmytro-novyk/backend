@@ -2,16 +2,13 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { User } from '../../../generated/prisma/client';
 import type { UserEntity } from '../entities/user.entity';
 import {
-  MAGIC_LINK_DISPATCHER_PORT,
-  type MagicLinkDispatcherPort,
-} from '../interfaces/magic-link-dispatcher.port';
-import {
   USER_REPOSITORY_PORT,
   type UserEditPatch,
   type UserListFilter,
   type UserListPage,
   type UserRepositoryPort,
 } from '../interfaces/user.repository.port';
+import type { SystemEventInput } from '../interfaces/user-event.repository.port';
 
 // The only holder of this context's repository/dispatcher ports (AD-2) —
 // application/actions/ depend on this service, never on a port token
@@ -23,8 +20,6 @@ export class UserService {
   constructor(
     @Inject(USER_REPOSITORY_PORT)
     private readonly userRepository: UserRepositoryPort,
-    @Inject(MAGIC_LINK_DISPATCHER_PORT)
-    private readonly magicLinkDispatcher: MagicLinkDispatcherPort,
   ) {}
 
   findByWorkEmail(workEmail: string): Promise<User | null> {
@@ -39,8 +34,12 @@ export class UserService {
     return this.userRepository.create(props, createdBy);
   }
 
-  update(id: string, patch: UserEditPatch): Promise<User> {
-    return this.userRepository.update(id, patch);
+  update(
+    id: string,
+    patch: UserEditPatch,
+    systemEvents?: SystemEventInput[],
+  ): Promise<User> {
+    return this.userRepository.update(id, patch, systemEvents);
   }
 
   deactivate(id: string): Promise<User> {
@@ -53,17 +52,5 @@ export class UserService {
     pageSize: number,
   ): Promise<UserListPage> {
     return this.userRepository.list(filter, page, pageSize);
-  }
-
-  // Registration must not roll back on dispatch failure (DEC-UM-008) —
-  // the caller decides whether/how to log; domain itself never touches
-  // stdout. Returns the caught error, or undefined on success.
-  async dispatchMagicLink(workEmail: string): Promise<unknown> {
-    try {
-      await this.magicLinkDispatcher.dispatch(workEmail);
-      return undefined;
-    } catch (error) {
-      return error;
-    }
   }
 }

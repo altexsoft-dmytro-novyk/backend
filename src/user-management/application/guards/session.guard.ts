@@ -3,6 +3,7 @@ import {
   type ExecutionContext,
   Inject,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Request } from 'express';
@@ -18,6 +19,8 @@ export interface RequestWithSession extends Request {
 
 @Injectable()
 export class SessionGuard implements CanActivate {
+  private readonly logger = new Logger(SessionGuard.name);
+
   constructor(
     @Inject(SESSION_RESOLVER_PORT)
     private readonly sessionResolver: SessionResolverPort,
@@ -29,6 +32,9 @@ export class SessionGuard implements CanActivate {
       request.headers.authorization,
     );
     if (!session) {
+      this.logger.debug(
+        `session unresolved for ${request.method} ${request.originalUrl.split('?')[0]} → 401`,
+      );
       throw new UnauthorizedException();
     }
 

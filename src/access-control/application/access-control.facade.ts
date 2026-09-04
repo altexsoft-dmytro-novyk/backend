@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import type { Audience } from '../domain/audience';
 import { AudienceResolverService } from '../domain/services/audience-resolver.service';
 import { FunctionalRoleEvaluatorService } from '../domain/services/functional-role-evaluator.service';
@@ -16,14 +16,18 @@ export type SectionAccess = 'none' | 'read' | 'write';
  */
 @Injectable()
 export class AccessControlFacade {
+  private readonly logger = new Logger(AccessControlFacade.name);
+
   constructor(
     private readonly resolver: AudienceResolverService,
     private readonly functionalRoles: FunctionalRoleEvaluatorService,
   ) {}
 
   /** Live global functional-permission decision (CAP-4); never cached. */
-  isAllowed(userId: string, permissionKey: string): Promise<boolean> {
-    return this.functionalRoles.isAllowed(userId, permissionKey);
+  async isAllowed(userId: string, permissionKey: string): Promise<boolean> {
+    const allowed = await this.functionalRoles.isAllowed(userId, permissionKey);
+    this.logger.debug(`isAllowed(${userId}, "${permissionKey}") → ${allowed}`);
+    return allowed;
   }
 
   /**
@@ -45,6 +49,22 @@ export class AccessControlFacade {
    * may only narrow this result.
    */
   async canAccessSection(
+    viewerId: string,
+    section: string,
+    targetEmployeeId: string,
+  ): Promise<SectionAccess> {
+    const access = await this.resolveSectionAccess(
+      viewerId,
+      section,
+      targetEmployeeId,
+    );
+    this.logger.debug(
+      `canAccessSection(${viewerId}, ${section}, ${targetEmployeeId}) → ${access}`,
+    );
+    return access;
+  }
+
+  private async resolveSectionAccess(
     viewerId: string,
     section: string,
     targetEmployeeId: string,

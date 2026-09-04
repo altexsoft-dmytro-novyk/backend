@@ -128,13 +128,14 @@ describe('ACM-8 Stage 2 — CAP-6 kernel composition (PostgreSQL)', () => {
     ]);
     expect((selfRead.body as { canEdit: boolean }).canEdit).toBe(false);
 
-    // An unconfirmed viewer (string id, matches no active User) → empty
-    // audience → the guard denies → 403. The interim `Boolean(userId)` leak is
-    // gone.
+    // An unconfirmed viewer (`AnyAuthenticatedViewer` matches no active User)
+    // → the session does not resolve → `401` (unresolved session), per
+    // umac-05 now that Epic 2's real `JwtSessionResolverAdapter` replaced the
+    // lax interim one. Still a denial; the `/users/:id` gate is intact.
     await request(app.getHttpServer())
       .get(`/users/${target.id}`)
       .set('authorization', 'Bearer <token:AnyAuthenticatedViewer>')
-      .expect(403);
+      .expect(401);
   });
 
   // docs/test-cases/access-control-kernel/kernel-composition/acm8-kc-04-no-http-or-debug-endpoint-added.md
