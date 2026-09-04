@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { uuidv7 } from 'uuidv7';
 import {
@@ -14,6 +15,7 @@ import {
   cleanupDepartures,
   queryDepartureRows,
   queryEmploymentStatusRows,
+  departureWorker,
   runDepartureWorker,
   type TestApp,
 } from './fixtures';
@@ -477,18 +479,223 @@ describe('Epic 5 · Story 5.2 — Apply an Effective Departure (e2e, committed r
   // um-dep-08 · a stale executor no-ops; the current-token executor owns the row
   // ======================================================================
   describe('um-dep-08 · stale-executor fencing', () => {
-    // A stale-executor no-op CANNOT be committed-red without the worker: there
-    // is no `DepartureWorkerService` claim/lease/reclaim path to drive with a
-    // stale `leaseToken`, and seeding `state='processing'` + a `leaseToken`
-    // by raw SQL only to assert "a method that does not exist no-ops" would be
-    // a hollow test. Deferred as `it.todo` with the Stage-3 unblock trigger.
-    // (Flagged in the AD-1 Stage-2 report.)
-    it.todo(
-      'um-dep-08 · the `DepartureWorkerService` skip-locked claim + `leaseToken`/`leaseUntil` fencing + reclaim lands (Stage 3): a stale-token executor apply attempt matches 0 rows and mutates no retry state',
-    );
-    it.todo(
-      'um-dep-08 · the `DepartureWorkerService` skip-locked claim + `leaseToken`/`leaseUntil` fencing + reclaim lands (Stage 3): the current-token executor owns the row and applies the LIVE effect set exactly once',
-    );
+    // Stage-3 unblock trigger met: `DepartureWorkerService` now exists with the
+    // skip-locked claim, `leaseToken`/`leaseUntil` fencing and the reclaim path,
+    // and `applyDeparture(id, token)` is a real public method returning
+    // `'stale' | 'applied' | 'failed'`. The earlier `it.todo` pair is replaced
+    // by the scenario's own four tests, driven through that real method — no
+    // fake clock, no provider override (AD-3).
+
+    /** Simulate executor A's claim that then stalled: `processing`, token A,
+     *  lease already expired. Returns tokenA. */
+    const seedStaleLease = async (departureId: string): Promise<string> => {
+      const tokenA = randomUUID();
+      await prisma().$executeRawUnsafe(
+        `UPDATE "departures"
+            SET state = $1::"DepartureState",
+                "leaseToken" = $2::uuid,
+                "leaseUntil" = $3
+          WHERE id = $4`,
+        'processing',
+        tokenA,
+        new Date(Date.now() - 60_000),
+        departureId,
+      );
+      return tokenA;
+    };
+
+    /** Simulate executor B reclaiming the expired lease. Returns tokenB. */
+    const reclaimAs = async (departureId: string): Promise<string> => {
+      const tokenB = randomUUID();
+      await prisma().$executeRawUnsafe(
+        `UPDATE "departures"
+            SET "leaseToken" = $1::uuid,
+                "leaseUntil" = $2
+          WHERE id = $3`,
+        tokenB,
+        new Date(Date.now() + 60_000),
+        departureId,
+      );
+      return tokenB;
+    };
+
+    interface LeaseRow {
+      state: string;
+      leaseToken: string | null;
+      attempts: number | bigint | null;
+      lastError: string | null;
+      nextAttemptAt: Date | null;
+      appliedAt: Date | null;
+    }
+
+    const readLease = async (departureId: string): Promise<LeaseRow> => {
+      const rows = await prisma().$queryRawUnsafe<LeaseRow[]>(
+        `SELECT state, "leaseToken", attempts, "lastError", "nextAttemptAt", "appliedAt"
+           FROM "departures" WHERE id = $1`,
+        departureId,
+      );
+      return rows[0];
+    };
+
+    it('um-dep-08 Test 1 — a stale-token apply attempt is a no-op: no effect, no retry-state mutation', async () => {
+      const actor = await seedActor('dep08t1-actor');
+      const alice = await fx.user('dep08t1-alice');
+      await seedActiveEmployment(alice.id);
+      const departureId = await seedDueDeparture(alice.id, actor.id, 'dep08t1');
+
+      const tokenA = await seedStaleLease(departureId);
+      const tokenB = await reclaimAs(departureId);
+      expect(tokenB).not.toBe(tokenA);
+
+      const before = await readLease(departureId);
+
+      // Executor A wakes up and tries to apply with its stale token.
+      const outcome = await departureWorker(testApp).applyDeparture(
+        departureId,
+        tokenA,
+      );
+      expect(outcome).toBe('stale');
+
+      // (a) no employment effect: the `active` interval is still open and no
+      //     `dismissed` row was written.
+      const employment = await queryEmploymentStatusRows(prisma(), alice.id);
+      expect(
+        employment.find((r) => r.status === 'active')?.validTo,
+      ).toBeNull();
+      expect(employment.find((r) => r.status === 'dismissed')).toBeUndefined();
+
+      // (b) the account was not deactivated.
+      const aliceRow = await prisma().user.findUnique({
+        where: { id: alice.id },
+      });
+      expect(aliceRow?.isActive).toBe(true);
+
+      // (c) no `AccessJournal` row was written by A.
+      expect(await queryAccessJournalRows(prisma(), alice.id)).toHaveLength(0);
+
+      // (d) retry state untouched, and B still owns the row.
+      const after = await readLease(departureId);
+      expect(Number(after.attempts ?? 0)).toBe(Number(before.attempts ?? 0));
+      expect(after.lastError).toBe(before.lastError);
+      expect(after.nextAttemptAt).toEqual(before.nextAttemptAt);
+      expect(after.appliedAt).toBeNull();
+      expect(after.leaseToken).toBe(tokenB);
+    });
+
+    it('um-dep-08 Test 2 — the current-token executor applies exactly once; a later stale-A retry still no-ops', async () => {
+      const actor = await seedActor('dep08t2-actor');
+      const alice = await fx.user('dep08t2-alice');
+      await seedActiveEmployment(alice.id);
+      const departureId = await seedDueDeparture(alice.id, actor.id, 'dep08t2');
+
+      const tokenA = await seedStaleLease(departureId);
+      const tokenB = await reclaimAs(departureId);
+
+      const applied = await departureWorker(testApp).applyDeparture(
+        departureId,
+        tokenB,
+      );
+      expect(applied).toBe('applied');
+
+      // The LIVE effect set from `um-dep-03`, present exactly once.
+      const employment = await queryEmploymentStatusRows(prisma(), alice.id);
+      const dismissed = employment.filter((r) => r.status === 'dismissed');
+      expect(dismissed).toHaveLength(1);
+      expect(dismissed[0].sourceDepartureId).toBe(departureId);
+      expect(
+        employment.find((r) => r.status === 'active')?.validTo,
+      ).not.toBeNull();
+
+      const aliceRow = await prisma().user.findUnique({
+        where: { id: alice.id },
+      });
+      expect(aliceRow?.isActive).toBe(false);
+
+      const afterB = await readLease(departureId);
+      expect(afterB.state).toBe('applied');
+      expect(afterB.appliedAt).not.toBeNull();
+
+      // A wakes up late: still fenced out, and nothing is applied twice.
+      const stale = await departureWorker(testApp).applyDeparture(
+        departureId,
+        tokenA,
+      );
+      expect(stale).toBe('stale');
+
+      const employmentAfter = await queryEmploymentStatusRows(
+        prisma(),
+        alice.id,
+      );
+      expect(
+        employmentAfter.filter((r) => r.status === 'dismissed'),
+      ).toHaveLength(1);
+      const afterA = await readLease(departureId);
+      expect(Number(afterA.attempts ?? 0)).toBe(Number(afterB.attempts ?? 0));
+      expect(afterA.lastError).toBe(afterB.lastError);
+      expect(afterA.appliedAt).toEqual(afterB.appliedAt);
+    });
+
+    it('um-dep-08 Test 3 · @concurrency — A and B apply in parallel: exactly one commits, the effect lands once', async () => {
+      const actor = await seedActor('dep08t3-actor');
+      const alice = await fx.user('dep08t3-alice');
+      await seedActiveEmployment(alice.id);
+      const departureId = await seedDueDeparture(alice.id, actor.id, 'dep08t3');
+
+      const tokenA = await seedStaleLease(departureId);
+      const tokenB = await reclaimAs(departureId);
+
+      // DEC-UM-010: parallel calls inside one test.
+      const worker = departureWorker(testApp);
+      const [outcomeA, outcomeB] = await Promise.all([
+        worker.applyDeparture(departureId, tokenA),
+        worker.applyDeparture(departureId, tokenB),
+      ]);
+
+      expect(outcomeA).toBe('stale');
+      expect(outcomeB).toBe('applied');
+
+      const employment = await queryEmploymentStatusRows(prisma(), alice.id);
+      expect(employment.filter((r) => r.status === 'dismissed')).toHaveLength(
+        1,
+      );
+
+      const row = await readLease(departureId);
+      expect(row.state).toBe('applied');
+    });
+
+    it('um-dep-08 Test 4 — reclaiming an expired lease bumps `reclaimedLeaseCount` and leaves one in-flight lease, not two', async () => {
+      const actor = await seedActor('dep08t4-actor');
+      const alice = await fx.user('dep08t4-alice');
+      await seedActiveEmployment(alice.id);
+      const departureId = await seedDueDeparture(alice.id, actor.id, 'dep08t4');
+
+      await seedStaleLease(departureId);
+
+      const readHealth = async () => {
+        const res = await request(server()).get('/health/departures');
+        expect(res.status).toBe(200);
+        return res.body as {
+          reclaimedLeaseCount: number;
+          processingCount: number;
+        };
+      };
+
+      const before = await readHealth();
+
+      // The real claim loop: a `processing` row past `leaseUntil` is eligible,
+      // so this pass reclaims it (new token) rather than running a second
+      // executor alongside the stalled one.
+      await runDepartureWorker(testApp);
+
+      const after = await readHealth();
+      expect(after.reclaimedLeaseCount).toBe(before.reclaimedLeaseCount + 1);
+      // One lease existed throughout — the reclaim replaced A's, it did not add
+      // a second. After the apply the row leaves `processing` entirely.
+      expect(after.processingCount).toBeLessThanOrEqual(1);
+
+      const row = await readLease(departureId);
+      expect(row.state).toBe('applied');
+    });
   });
 
   // ======================================================================
