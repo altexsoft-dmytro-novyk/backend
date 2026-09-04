@@ -341,7 +341,7 @@ describe('Epic 3 · Manual backfill — POST /users/:id/events (e2e, committed r
 
   // DEC-UM-001 narrowing (access-control.md §3.3 matrix exception): the broad
   // reporting line has a RW S9 read cell but is NOT the manual-write audience.
-  describe('DEC-UM-001 narrowing · a reporting-line manager who is not the direct UM / PP → denied for manual add [DEFERRED]', () => {
+  describe('um-ct-09 · DEC-UM-001 narrowing · a reporting-line manager who is not the direct UM / PP → denied for manual add [DEFERRED]', () => {
     it.todo(
       'DEC-UM-001 · a non-direct reporting-line manager holding profile:timeline:write POSTs an event → 403 — unblock: FR-permission-matrix grants profile:timeline:write to PP / Unit-Manager roles + DEC-UM-001 audience narrowing lands (RW S9 read cell for the reporting line ≠ manual-write audience)',
     );

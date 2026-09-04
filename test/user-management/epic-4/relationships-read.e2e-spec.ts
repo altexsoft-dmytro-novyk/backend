@@ -75,7 +75,7 @@ describe('Story 6.1 (Epic 6) — GET /users/:id/relationships [lives with the ep
   });
 
   // Row 1 — Manager + PP both set --------------------------------------
-  it('T1 · manager + PP both set, viewer is the reporting-line manager → 200 with both current edges, manager edge first', async () => {
+  it('um-rel-18 · T1 · manager + PP both set, viewer is the reporting-line manager → 200 with both current edges, manager edge first', async () => {
     const target = await fx.user('rel-read-t1-target');
     const manager = await fx.user('rel-read-t1-manager', {
       firstName: 'Mona',
@@ -128,7 +128,7 @@ describe('Story 6.1 (Epic 6) — GET /users/:id/relationships [lives with the ep
   });
 
   // Row 2 — PP only ---------------------------------------------------
-  it('T2 · PP only, viewer is the assigned People Partner → 200 with just the people_partner edge', async () => {
+  it('um-rel-19 · T2 · PP only, viewer is the assigned People Partner → 200 with just the people_partner edge', async () => {
     const target = await fx.user('rel-read-t2-target');
     const partner = await fx.user('rel-read-t2-partner', {
       firstName: 'Priya',
@@ -150,7 +150,7 @@ describe('Story 6.1 (Epic 6) — GET /users/:id/relationships [lives with the ep
   });
 
   // Row 3 — No edges -----------------------------------------------
-  it('T3 · active target with no edges, entitled viewer → 200 { data: [] }, not 404', async () => {
+  it('um-rel-20 · T3 · active target with no edges, entitled viewer → 200 { data: [] }, not 404', async () => {
     const target = await fx.user('rel-read-t3-target');
     const viewer = await fx.user('rel-read-t3-viewer');
     await fx.grantFunctionalRole(viewer.id, [
@@ -164,7 +164,7 @@ describe('Story 6.1 (Epic 6) — GET /users/:id/relationships [lives with the ep
   });
 
   // Row 4 — Visible but not entitled --------------------------------
-  it('T4 · viewer resolves only colleague and holds no org:relationships:write → 403, leak-free', async () => {
+  it('um-rel-21 · T4 · viewer resolves only colleague and holds no org:relationships:write → 403, leak-free', async () => {
     const target = await fx.user('rel-read-t4-target');
     const manager = await fx.user('rel-read-t4-manager');
     await fx.reportsTo(target.id, manager.id);
@@ -178,7 +178,7 @@ describe('Story 6.1 (Epic 6) — GET /users/:id/relationships [lives with the ep
     expect(JSON.stringify(res.body)).not.toContain(manager.id);
   });
 
-  it('T4b · Self is not a reader (only the self audience, no capability) → 403', async () => {
+  it('um-rel-21 · T4b · Self is not a reader (only the self audience, no capability) → 403', async () => {
     const target = await fx.user('rel-read-t4b-target');
     const manager = await fx.user('rel-read-t4b-manager');
     await fx.reportsTo(target.id, manager.id);
@@ -189,7 +189,7 @@ describe('Story 6.1 (Epic 6) — GET /users/:id/relationships [lives with the ep
   });
 
   // Row 5 — Entitled by capability ---------------------------------
-  it('T5 · viewer holds org:relationships:write but has no reporting/pp audience → 200 with the current edges', async () => {
+  it('um-rel-22 · T5 · viewer holds org:relationships:write but has no reporting/pp audience → 200 with the current edges', async () => {
     const target = await fx.user('rel-read-t5-target');
     const manager = await fx.user('rel-read-t5-manager', {
       firstName: 'Max',
@@ -214,7 +214,7 @@ describe('Story 6.1 (Epic 6) — GET /users/:id/relationships [lives with the ep
   });
 
   // Row 6 — Target missing / inactive ------------------------------
-  it('T6a · :id is not a known User → 404 leak-free, before any audience resolution', async () => {
+  it('um-rel-23 · T6a · :id is not a known User → 404 leak-free, before any audience resolution', async () => {
     const viewer = await fx.user('rel-read-t6a-viewer');
     await fx.grantFunctionalRole(viewer.id, [
       ORG_RELATIONSHIPS_WRITE_PERMISSION,
@@ -226,7 +226,7 @@ describe('Story 6.1 (Epic 6) — GET /users/:id/relationships [lives with the ep
     expectLeakFreeBody(res.body);
   });
 
-  it('T6b · :id is an inactive User → 404 leak-free', async () => {
+  it('um-rel-23 · T6b · :id is an inactive User → 404 leak-free', async () => {
     const inactive = await fx.user('rel-read-t6b-inactive', {
       isActive: false,
     });
@@ -242,7 +242,7 @@ describe('Story 6.1 (Epic 6) — GET /users/:id/relationships [lives with the ep
   });
 
   // Row 7 — No / unresolved session -------------------------------
-  it('T7a · no Authorization header → 401', async () => {
+  it('um-rel-24 · T7a · no Authorization header → 401', async () => {
     const target = await fx.user('rel-read-t7a-target');
 
     const res = await getRelationships(target.id);
@@ -250,7 +250,7 @@ describe('Story 6.1 (Epic 6) — GET /users/:id/relationships [lives with the ep
     expect(res.status).toBe(401);
   });
 
-  it('T7b · Bearer token resolving to nobody → 401', async () => {
+  it('um-rel-24 · T7b · Bearer token resolving to nobody → 401', async () => {
     const target = await fx.user('rel-read-t7b-target');
 
     const res = await getRelationships(target.id, uuidv7());
@@ -259,7 +259,7 @@ describe('Story 6.1 (Epic 6) — GET /users/:id/relationships [lives with the ep
   });
 
   // Projection guards ------------------------------------------------
-  it("T8 · a `type: 'project'` edge on the subject is never returned", async () => {
+  it("um-rel-25 · T8 · a `type: 'project'` edge on the subject is never returned", async () => {
     const target = await fx.user('rel-read-t8-target');
     const manager = await fx.user('rel-read-t8-manager', {
       firstName: 'Meg',
@@ -287,7 +287,7 @@ describe('Story 6.1 (Epic 6) — GET /users/:id/relationships [lives with the ep
     expect(body.data.some((e) => e.type === 'project')).toBe(false);
   });
 
-  it('T9 · a `direct` edge whose target manager is deactivated is not a current edge', async () => {
+  it('um-rel-26 · T9 · a `direct` edge whose target manager is deactivated is not a current edge', async () => {
     const target = await fx.user('rel-read-t9-target');
     const manager = await fx.user('rel-read-t9-manager');
     await fx.reportsTo(target.id, manager.id);

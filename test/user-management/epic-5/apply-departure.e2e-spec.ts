@@ -701,7 +701,7 @@ describe('Epic 5 · Story 5.2 — Apply an Effective Departure (e2e, committed r
   // ======================================================================
   // AD-20 health surface — LIVE subset
   // ======================================================================
-  describe('GET /health/departures · AD-20 health surface (LIVE subset)', () => {
+  describe('um-dep-03 · GET /health/departures · AD-20 health surface (LIVE subset)', () => {
     it('LIVE — returns 200 with the AD-20 counter shape while a due row is unprocessed', async () => {
       const actor = await seedActor('dep-health-actor');
       const alice = await fx.user('dep-health-alice');

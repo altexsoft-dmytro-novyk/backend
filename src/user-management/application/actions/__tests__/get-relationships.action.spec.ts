@@ -44,7 +44,7 @@ const build = (overrides: Partial<Fakes> = {}) => {
 };
 
 describe('GetRelationshipsAction', () => {
-  it('missing target → NotFoundException, before the reader gate', async () => {
+  it('um-rel-23 · missing target → NotFoundException, before the reader gate', async () => {
     const { action, fakes } = build({
       findById: jest.fn().mockResolvedValue(null),
     });
@@ -56,7 +56,7 @@ describe('GetRelationshipsAction', () => {
     expect(fakes.listCurrentEdges).not.toHaveBeenCalled();
   });
 
-  it('inactive target → NotFoundException, before the reader gate', async () => {
+  it('um-rel-23 · inactive target → NotFoundException, before the reader gate', async () => {
     const { action, fakes } = build({
       findById: jest.fn().mockResolvedValue(inactiveUser(SUBJECT)),
     });
@@ -67,7 +67,7 @@ describe('GetRelationshipsAction', () => {
     expect(fakes.canRead).not.toHaveBeenCalled();
   });
 
-  it('active target, not entitled → ForbiddenException, no edge read', async () => {
+  it('um-rel-21 · active target, not entitled → ForbiddenException, no edge read', async () => {
     const { action, fakes } = build({
       canRead: jest.fn().mockResolvedValue(false),
     });
@@ -78,7 +78,7 @@ describe('GetRelationshipsAction', () => {
     expect(fakes.listCurrentEdges).not.toHaveBeenCalled();
   });
 
-  it('entitled, no edges → { data: [] }', async () => {
+  it('um-rel-20 · entitled, no edges → { data: [] }', async () => {
     const { action } = build();
 
     await expect(action.execute(VIEWER, SUBJECT)).resolves.toEqual({
@@ -86,7 +86,7 @@ describe('GetRelationshipsAction', () => {
     });
   });
 
-  it('entitled, both edges → mapped CurrentEdgeView[] with relationshipId + target identity', async () => {
+  it('um-rel-18 · entitled, both edges → mapped CurrentEdgeView[] with relationshipId + target identity', async () => {
     const edges: CurrentEdge[] = [
       {
         id: 'rel-direct',

@@ -209,7 +209,7 @@ describe('UMAC-2 Stage 2 — PATCH / PUT photo write-path gates (e2e)', () => {
   // (deactivated / unknown). A full rewrite of the per-section predicates is
   // tracked in the access-control deferred-work
   // ("Generalise section-access authorisation").
-  describe('S1 edit · `user-management:edit` FR grant is an OR-override on the section gate', () => {
+  describe('umac-10 · S1 edit · `user-management:edit` FR grant is an OR-override on the section gate', () => {
     it('grant holder with no reporting/PP edge PATCHes an active card → 200, persists, canEdit:true', async () => {
       const editor = await fx.user('umac07-fr-editor', { firstName: 'Editor' });
       const target = await fx.user('umac07-fr-target', { city: 'Krakow' });
