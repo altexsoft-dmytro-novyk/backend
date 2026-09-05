@@ -29,8 +29,9 @@ export class CareerTimelineAccessFacadeAdapter implements CareerTimelineAccessPo
     viewerId: string,
     targetUserId: string,
   ): Promise<boolean> {
-    // INTERIM: `AccessControlFacade.canAccessSection` answers 'S1'/'S10'/'S11'
-    // only — it does not answer 'profile:timeline' yet. Replace this
+    // INTERIM: `AccessControlFacade.canAccessSection` answers
+    // 'profile:identity'/'profile:leave'/'profile:projects' only — it does not
+    // answer 'profile:timeline' yet. Replace this
     // `resolveAudiences` rule with
     // `canAccessSection('profile:timeline', viewerId, targetUserId) !== 'none'`
     // when that AC increment reaches stage-3-production

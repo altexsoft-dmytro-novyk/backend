@@ -17,16 +17,18 @@ import type { IdentityCardAccessPort } from '../domain/interfaces/identity-card-
 
 // The target-scoped read route maps to Phase-0 audience resolution: any
 // non-empty audience (`self` / `reporting` / `pp` / `colleague`) over an active
-// target is entitled to the S1 identity card (§3.2). An empty audience — which
-// on this route means the target is not an active `User` — denies (guard → 403).
+// target is entitled to the `profile:identity` card (§3.2). An empty audience
+// — which on this route means the target is not an active `User` — denies
+// (guard → 403).
 const READ_USER_FEATURE = 'user-management:read';
 // The `PATCH /users/:id` gate (and the `canEdit` hint). Variant A base gate is
-// `canAccessSection('S1') === 'write'` (reporting-line manager or assigned
-// People Partner); holding this key as a live FR grant is an OR override on top
-// — see `canEditS1`.
+// `canAccessSection('profile:identity') === 'write'` (reporting-line manager
+// or assigned People Partner); holding this key as a live FR grant is an OR
+// override on top — see `canEditS1`.
 const EDIT_USER_FEATURE = 'user-management:edit';
-// The identity-card section string the kernel supports for S1 (ACM-5).
-const S1_SECTION = 'S1';
+// The identity-card section key the kernel supports (ACM-5; renamed from the
+// legacy `'S1'` string by PLAT-E4-S4.1b).
+const S1_SECTION = 'profile:identity';
 
 @Injectable()
 export class AccessControlFacadeAdapter
@@ -71,12 +73,12 @@ export class AccessControlFacadeAdapter
     return this.canEditS1(viewerId, targetUserId);
   }
 
-  // The identity-card (S1) edit decision, shared by the `PATCH /users/:id` gate
-  // and the read-only `canEdit` hint.
+  // The identity-card (`profile:identity`) edit decision, shared by the
+  // `PATCH /users/:id` gate and the read-only `canEdit` hint.
   //
   // Base gate (product decision 2026-09-02, "Variant A"): audience write-access
   // — the manager on this person's reporting line, or their assigned People
-  // Partner. That is `canAccessSection('S1') === 'write'`.
+  // Partner. That is `canAccessSection('profile:identity') === 'write'`.
   //
   // OR override: a live `user-management:edit` functional permission widens the
   // base gate (e.g. the seeded root HR Admin, via `scripts/dev-grant-root.ts`).

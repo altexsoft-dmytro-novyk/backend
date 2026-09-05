@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { Audience } from '../domain/audience';
+import { SECTION_ACCESS_MATRIX } from '../domain/constants/section-access-matrix';
 import { AudienceResolverService } from '../domain/services/audience-resolver.service';
 import { FunctionalRoleEvaluatorService } from '../domain/services/functional-role-evaluator.service';
 
@@ -69,7 +70,8 @@ export class AccessControlFacade {
     section: string,
     targetEmployeeId: string,
   ): Promise<SectionAccess> {
-    if (section !== 'S1' && section !== 'S10' && section !== 'S11') {
+    const row = SECTION_ACCESS_MATRIX[section];
+    if (!row) {
       return 'none';
     }
 
@@ -80,16 +82,14 @@ export class AccessControlFacade {
       return 'none';
     }
 
-    if (section === 'S1') {
-      if (targetAudiences.has('reporting') || targetAudiences.has('pp')) {
-        return 'write';
+    const RANK: Record<SectionAccess, number> = { none: 0, read: 1, write: 2 };
+    let best: SectionAccess = 'none';
+    for (const audience of targetAudiences) {
+      const cell = row[audience] ?? 'none';
+      if (RANK[cell] > RANK[best]) {
+        best = cell;
       }
-
-      return targetAudiences.has('self') || targetAudiences.has('colleague')
-        ? 'read'
-        : 'none';
     }
-
-    return 'read';
+    return best;
   }
 }

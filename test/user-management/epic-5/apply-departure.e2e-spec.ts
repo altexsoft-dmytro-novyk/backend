@@ -559,9 +559,7 @@ describe('Epic 5 · Story 5.2 — Apply an Effective Departure (e2e, committed r
       // (a) no employment effect: the `active` interval is still open and no
       //     `dismissed` row was written.
       const employment = await queryEmploymentStatusRows(prisma(), alice.id);
-      expect(
-        employment.find((r) => r.status === 'active')?.validTo,
-      ).toBeNull();
+      expect(employment.find((r) => r.status === 'active')?.validTo).toBeNull();
       expect(employment.find((r) => r.status === 'dismissed')).toBeUndefined();
 
       // (b) the account was not deactivated.

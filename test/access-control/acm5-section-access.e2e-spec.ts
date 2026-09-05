@@ -16,13 +16,17 @@ type SectionAccessFacade = {
 };
 
 /**
- * ACM-5 Stage 2 — CAP-5 base S1/S10/S11 section access.
+ * ACM-5 Stage 2 — CAP-5 base `profile:identity`/`profile:leave`/
+ * `profile:projects` section access.
  *
- * Translates only the approved ACM5-SA-01..09 contracts through the real
+ * Translates only the approved ACM5-SA-01..09 contracts (amended
+ * PLAT-E4-S4.1b to the human section keys) through the real
  * AccessControlFacade/AccessControlModule/Prisma/PostgreSQL boundary. The
  * tests deliberately use no repository fake, provider override, or HTTP
- * endpoint. EXPECTED RED: AccessControlFacade has no canAccessSection public
- * method yet; the missing method is the production behavior this stage gates.
+ * endpoint. `resolveSectionAccess` is `SECTION_ACCESS_MATRIX`-driven
+ * (PLAT-E4-S4.1b); SA-06 deliberately uses the retired `'S1'` string as its
+ * unsupported-section example to lock in that the legacy identifier no
+ * longer works.
  */
 describe('ACM-5 Stage 2 — CAP-5 section access (PostgreSQL)', () => {
   let moduleFixture: TestingModule;
@@ -145,62 +149,68 @@ describe('ACM-5 Stage 2 — CAP-5 section access (PostgreSQL)', () => {
   });
 
   // docs/test-cases/access-control-kernel/section-access/acm5-sa-01-s1-self-or-colleague-read.md
-  it('ACM5-SA-01 returns S1 read for exactly Self or Colleague', async () => {
-    await expect(canAccess(ids.Self, 'S1', ids.Self)).resolves.toBe('read');
+  it('ACM5-SA-01 returns profile:identity read for exactly Self or Colleague', async () => {
     await expect(
-      canAccess(ids.ColleagueViewer, 'S1', ids.ColleagueTarget),
+      canAccess(ids.Self, 'profile:identity', ids.Self),
+    ).resolves.toBe('read');
+    await expect(
+      canAccess(ids.ColleagueViewer, 'profile:identity', ids.ColleagueTarget),
     ).resolves.toBe('read');
   });
 
   // docs/test-cases/access-control-kernel/section-access/acm5-sa-02-s1-reporting-or-pp-write.md
-  it('ACM5-SA-02 returns S1 write for Reporting or direct PP', async () => {
+  it('ACM5-SA-02 returns profile:identity write for Reporting or direct PP', async () => {
     await expect(
-      canAccess(ids.ReportingViewer, 'S1', ids.ReportingTarget),
+      canAccess(ids.ReportingViewer, 'profile:identity', ids.ReportingTarget),
     ).resolves.toBe('write');
-    await expect(canAccess(ids.PpViewer, 'S1', ids.PpTarget)).resolves.toBe(
-      'write',
-    );
+    await expect(
+      canAccess(ids.PpViewer, 'profile:identity', ids.PpTarget),
+    ).resolves.toBe('write');
   });
 
   // docs/test-cases/access-control-kernel/section-access/acm5-sa-03-s10-all-phase-zero-audiences-read.md
-  it('ACM5-SA-03 returns S10 read, never write or none, for every Phase-0 audience', async () => {
-    await expect(canAccess(ids.Self, 'S10', ids.Self)).resolves.toBe('read');
-    await expect(
-      canAccess(ids.ColleagueViewer, 'S10', ids.ColleagueTarget),
-    ).resolves.toBe('read');
-    await expect(
-      canAccess(ids.ReportingViewer, 'S10', ids.ReportingTarget),
-    ).resolves.toBe('read');
-    await expect(canAccess(ids.PpViewer, 'S10', ids.PpTarget)).resolves.toBe(
+  it('ACM5-SA-03 returns profile:leave read, never write or none, for every Phase-0 audience', async () => {
+    await expect(canAccess(ids.Self, 'profile:leave', ids.Self)).resolves.toBe(
       'read',
     );
+    await expect(
+      canAccess(ids.ColleagueViewer, 'profile:leave', ids.ColleagueTarget),
+    ).resolves.toBe('read');
+    await expect(
+      canAccess(ids.ReportingViewer, 'profile:leave', ids.ReportingTarget),
+    ).resolves.toBe('read');
+    await expect(
+      canAccess(ids.PpViewer, 'profile:leave', ids.PpTarget),
+    ).resolves.toBe('read');
   });
 
   // docs/test-cases/access-control-kernel/section-access/acm5-sa-04-s11-all-phase-zero-audiences-read.md
-  it('ACM5-SA-04 returns S11 read, never write or none, for every Phase-0 audience', async () => {
-    await expect(canAccess(ids.Self, 'S11', ids.Self)).resolves.toBe('read');
+  it('ACM5-SA-04 returns profile:projects read, never write or none, for every Phase-0 audience', async () => {
     await expect(
-      canAccess(ids.ColleagueViewer, 'S11', ids.ColleagueTarget),
+      canAccess(ids.Self, 'profile:projects', ids.Self),
     ).resolves.toBe('read');
     await expect(
-      canAccess(ids.ReportingViewer, 'S11', ids.ReportingTarget),
+      canAccess(ids.ColleagueViewer, 'profile:projects', ids.ColleagueTarget),
     ).resolves.toBe('read');
-    await expect(canAccess(ids.PpViewer, 'S11', ids.PpTarget)).resolves.toBe(
-      'read',
-    );
+    await expect(
+      canAccess(ids.ReportingViewer, 'profile:projects', ids.ReportingTarget),
+    ).resolves.toBe('read');
+    await expect(
+      canAccess(ids.PpViewer, 'profile:projects', ids.PpTarget),
+    ).resolves.toBe('read');
   });
 
   // docs/test-cases/access-control-kernel/section-access/acm5-sa-05-strongest-merged-audience-wins.md
   it('ACM5-SA-05 returns the strongest result for a Reporting plus PP set', async () => {
     await expect(
-      canAccess(ids.MergedViewer, 'S1', ids.MergedTarget),
+      canAccess(ids.MergedViewer, 'profile:identity', ids.MergedTarget),
     ).resolves.toBe('write');
   });
 
   // docs/test-cases/access-control-kernel/section-access/acm5-sa-06-unsupported-section-returns-none.md
-  it('ACM5-SA-06 returns none successfully for every unsupported section string', async () => {
+  it('ACM5-SA-06 returns none successfully for every unsupported section string, including the retired S1 identifier', async () => {
     await expect(
-      canAccess(ids.ReportingViewer, 'S5', ids.ReportingTarget),
+      canAccess(ids.ReportingViewer, 'S1', ids.ReportingTarget),
     ).resolves.toBe('none');
   });
 
@@ -209,26 +219,26 @@ describe('ACM-5 Stage 2 — CAP-5 section access (PostgreSQL)', () => {
     const missingTargetId = uuidv7();
 
     await expect(
-      canAccess(ids.ReportingViewer, 'S1', missingTargetId),
+      canAccess(ids.ReportingViewer, 'profile:identity', missingTargetId),
     ).resolves.toBe('none');
     await expect(
-      canAccess(ids.ReportingViewer, 'S10', missingTargetId),
+      canAccess(ids.ReportingViewer, 'profile:leave', missingTargetId),
     ).resolves.toBe('none');
     await expect(
-      canAccess(ids.ReportingViewer, 'S11', missingTargetId),
+      canAccess(ids.ReportingViewer, 'profile:projects', missingTargetId),
     ).resolves.toBe('none');
   });
 
   // docs/test-cases/access-control-kernel/section-access/acm5-sa-08-empty-audiences-return-none.md
   it('ACM5-SA-08 returns none for every supported section when Phase-0 resolves no audience', async () => {
     await expect(
-      canAccess(ids.InactiveViewer, 'S1', ids.ReportingTarget),
+      canAccess(ids.InactiveViewer, 'profile:identity', ids.ReportingTarget),
     ).resolves.toBe('none');
     await expect(
-      canAccess(ids.InactiveViewer, 'S10', ids.ReportingTarget),
+      canAccess(ids.InactiveViewer, 'profile:leave', ids.ReportingTarget),
     ).resolves.toBe('none');
     await expect(
-      canAccess(ids.InactiveViewer, 'S11', ids.ReportingTarget),
+      canAccess(ids.InactiveViewer, 'profile:projects', ids.ReportingTarget),
     ).resolves.toBe('none');
   });
 
@@ -240,7 +250,7 @@ describe('ACM-5 Stage 2 — CAP-5 section access (PostgreSQL)', () => {
     );
     try {
       await expect(
-        canAccess(ids.ReportingViewer, 'S1', ids.ReportingTarget),
+        canAccess(ids.ReportingViewer, 'profile:identity', ids.ReportingTarget),
       ).rejects.toBeDefined();
     } finally {
       await prisma.$executeRawUnsafe(

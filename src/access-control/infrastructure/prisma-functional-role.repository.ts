@@ -34,4 +34,12 @@ export class PrismaFunctionalRoleRepository implements FunctionalRoleRepositoryP
     `;
     return row.allowed;
   }
+
+  async isActiveUser(userId: string): Promise<boolean> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { isActive: true },
+    });
+    return user?.isActive ?? false;
+  }
 }
