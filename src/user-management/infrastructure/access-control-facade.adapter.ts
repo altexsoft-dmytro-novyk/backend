@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { AccessControlFacade } from '../../access-control/application/access-control.facade';
-import type { AccessControlPort } from '../domain/interfaces/access-control.port';
+import { PROFILE_IDENTITY_SECTION } from '../domain/constants/section-keys';
+import type {
+  AccessControlPort,
+  SectionAccessLevel,
+  SectionAccessRequirement,
+} from '../domain/interfaces/access-control.port';
 import type { IdentityCardAccessPort } from '../domain/interfaces/identity-card-access.port';
 
 // The real production binding for `ACCESS_CONTROL_PORT` (AD-21 cutover — this
@@ -29,6 +34,15 @@ const EDIT_USER_FEATURE = 'user-management:edit';
 // The identity-card section key the kernel supports (ACM-5; renamed from the
 // legacy `'S1'` string by PLAT-E4-S4.1b).
 const S1_SECTION = 'profile:identity';
+
+// Level satisfaction is by rank, not equality: a resolved level satisfies a
+// requirement when it sits at or above it, so `write` satisfies a `'read'`
+// requirement and `none` satisfies neither (story 4.1 "Guard semantics").
+const SECTION_ACCESS_RANK: Record<SectionAccessLevel, number> = {
+  none: 0,
+  read: 1,
+  write: 2,
+};
 
 @Injectable()
 export class AccessControlFacadeAdapter
@@ -65,16 +79,68 @@ export class AccessControlFacadeAdapter
     return false;
   }
 
-  // The `canEdit` hint on `GET /users/:id`, and the gate on `PATCH /users/:id`.
+  // The one section-parameterised authorisation question (SCP 2026-09-04 D3),
+  // asked by `SectionAccessGuard` for every `@RequireSectionAccess` route and
+  // by `canEditIdentityCard` for the `canEdit` hint.
+  //
+  // AUDIENCE-FIRST, and the ordering is the invariant rather than a style
+  // choice (`docs/architecture/access-control.md:19`, NORMATIVE — "a new
+  // functional role never widens data access ... feature permissions operate
+  // *within* the holder's resolved audiences only"). `canAccessSection`
+  // resolves first and returns `false` on its own; `isAllowed` is reached only
+  // after the audience half has already allowed, so the functional half can
+  // only ever subtract. An unmapped section resolves `'none'` here and denies
+  // — fail-closed, no throw, no log-and-allow.
+  //
+  // The feature half of the D1 dual gate is `'<section>:write'`, and it is
+  // consulted ONLY for a `'write'` requirement: §3.2 decides reads by audience
+  // alone and `DEFAULT_PERMISSIONS` holds no `:read` key, so deriving
+  // `'<section>:<level>'` uniformly would ask for a key nobody holds and deny
+  // every read.
+  async hasSectionAccess(
+    userId: string,
+    section: string,
+    level: SectionAccessRequirement,
+    targetUserId: string,
+  ): Promise<boolean> {
+    const resolved = await this.facade.canAccessSection(
+      userId,
+      section,
+      targetUserId,
+    );
+    if (SECTION_ACCESS_RANK[resolved] < SECTION_ACCESS_RANK[level]) {
+      return false;
+    }
+    if (level === 'read') {
+      return true;
+    }
+    return this.facade.isAllowed(userId, `${section}:write`);
+  }
+
+  // The `canEdit` hint on `GET /users/:id`. Literally the same call the
+  // `PATCH /users/:id` gate makes, so the hint and the gate cannot disagree.
   async canEditIdentityCard(
     viewerId: string,
     targetUserId: string,
   ): Promise<boolean> {
-    return this.canEditS1(viewerId, targetUserId);
+    return this.hasSectionAccess(
+      viewerId,
+      PROFILE_IDENTITY_SECTION,
+      'write',
+      targetUserId,
+    );
   }
 
-  // The identity-card (`profile:identity`) edit decision, shared by the
-  // `PATCH /users/:id` gate and the read-only `canEdit` hint.
+  // DEAD as of PLAT-E4-S4.1c — no caller remains: both the `PATCH /users/:id`
+  // gate and the `canEdit` hint now resolve through `hasSectionAccess`. It is
+  // left standing deliberately; its deletion (with `S1_SECTION`,
+  // `isAllowedForTarget`, and the `READ_USER_FEATURE` / `EDIT_USER_FEATURE`
+  // branches) is 4.1d's, and the `user-management:edit` OR clause below is
+  // Story 4.2's, coupled to seating root in the relationship tree.
+  //
+  // The identity-card (`profile:identity`) edit decision as it stood before
+  // 4.1c, shared by the `PATCH /users/:id` gate and the read-only `canEdit`
+  // hint.
   //
   // Base gate (product decision 2026-09-02, "Variant A"): audience write-access
   // — the manager on this person's reporting line, or their assigned People

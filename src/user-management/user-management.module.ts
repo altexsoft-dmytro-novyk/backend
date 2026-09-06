@@ -53,6 +53,7 @@ import { ConsumeMagicLinkAction } from './application/actions/consume-magic-link
 import { RequestMagicLinkAction } from './application/actions/request-magic-link.action';
 import { UploadUserPhotoAction } from './application/actions/upload-user-photo.action';
 import { AccessControlGuard } from './application/guards/access-control.guard';
+import { SectionAccessGuard } from './application/guards/section-access.guard';
 import { SelfOnlyGuard } from './application/guards/self-only.guard';
 import { SessionGuard } from './application/guards/session.guard';
 import { CareerTimelineAccessService } from './domain/services/career-timeline-access.service';
@@ -124,6 +125,7 @@ import { UserRepository } from './infrastructure/user.repository';
     ConsumeMagicLinkAction,
     SessionGuard,
     AccessControlGuard,
+    SectionAccessGuard,
     SelfOnlyGuard,
     UserService,
     IdentityCardAccessService,

@@ -200,69 +200,31 @@ describe('UMAC-2 Stage 2 — PATCH / PUT photo write-path gates (e2e)', () => {
     });
   });
 
-  // The `user-management:edit` FR-grant OR-override on the profile:identity edit gate (added
-  // 2026-09-03). This is NOT Variant A — it is the provisional widening that
-  // `scripts/dev-grant-root.ts` relies on to give a local root `canEdit` on
-  // every card. `access-control-facade.adapter.ts` `canEditS1`: a live
-  // `user-management:edit` grant passes the gate for any target section access
-  // already resolves to `read`/`write`, but NEVER for a `'none'` target
-  // (deactivated / unknown). A full rewrite of the per-section predicates is
-  // tracked in the access-control deferred-work
-  // ("Generalise section-access authorisation").
-  describe('umac-10 · profile:identity edit · `user-management:edit` FR grant is an OR-override on the section gate', () => {
-    it('grant holder with no reporting/PP edge PATCHes an active card → 200, persists, canEdit:true', async () => {
-      const editor = await fx.user('umac07-fr-editor', { firstName: 'Editor' });
-      const target = await fx.user('umac07-fr-target', { city: 'Krakow' });
-      // editor is only `colleague` over target → canAccessSection('profile:identity') === 'read'.
-      await fx.grantFunctionalRole(editor.id, ['user-management:edit']);
-
-      const res = await patch(target.id, editor.id, { city: 'Berlin' });
-      expect(res.status).toBe(200);
-      expect(res.body).toMatchObject({ city: 'Berlin' });
-
-      const readBack = await getUser(target.id, editor.id);
-      expect(readBack.body).toMatchObject({
-        data: { city: 'Berlin' },
-        canEdit: true,
-      });
-    });
-
-    it('grant holder edits their OWN card (self, no edge) → 200, canEdit:true', async () => {
-      const editor = await fx.user('umac07-fr-self', { city: 'Krakow' });
-      await fx.grantFunctionalRole(editor.id, ['user-management:edit']);
-
-      const res = await patch(editor.id, editor.id, { city: 'Gdansk' });
-      expect(res.status).toBe(200);
-
-      const readBack = await getUser(editor.id, editor.id);
-      expect(readBack.body).toMatchObject({
-        data: { city: 'Gdansk' },
-        canEdit: true,
-      });
-    });
-
-    it('the override never widens past section access — grant holder PATCHing a DEACTIVATED target → 403', async () => {
-      const editor = await fx.user('umac07-fr-inact-editor', {
-        firstName: 'Editor',
-      });
-      const target = await fx.user('umac07-fr-inact-target', {
-        city: 'Krakow',
-        isActive: false,
-      });
-      await fx.grantFunctionalRole(editor.id, ['user-management:edit']);
-      // canAccessSection('profile:identity', <inactive>) === 'none' → closed for everyone,
-      // grant or not.
-
-      const res = await patch(target.id, editor.id, { city: 'Berlin' });
-      expect(res.status).toBe(403);
-
-      const row = await testApp.prisma.user.findUnique({
-        where: { id: target.id },
-        select: { city: true },
-      });
-      expect(row?.city).toBe('Krakow');
-    });
-  });
+  // `umac-10` (the `user-management:edit` FR-grant OR-override describe block,
+  // added 2026-09-03) was RETIRED here by PLAT-E4-S4.1c.
+  //
+  // Why: 4.1c moved `PATCH /users/:id` and the `canEdit` hint off
+  // `isAllowedForTarget` → `canEditS1` onto the audience-first dual gate
+  // `@RequireSectionAccess('profile:identity', 'write')`. The OR-override is
+  // therefore no longer on any live code path, and two of the block's three
+  // assertions necessarily invert: a grant holder whose only audience is
+  // `colleague` or `self` is now `403` / `canEdit:false`, because §3.2 gives
+  // both cells `R` and `docs/architecture/access-control.md:19` (NORMATIVE)
+  // forbids a functional role from widening a resolved audience. That is D1
+  // taking effect, not a regression — the flip restores the normative rule.
+  //
+  // Its intent is superseded by
+  // `docs/test-cases/user-management/access-control-adoption/s41c-sag-04-functional-grant-never-widens-audience.md`,
+  // asserted in `s41c-section-access-gate.e2e-spec.ts` — including the block's
+  // one surviving assertion (a `'none'` target stays closed to a grant holder),
+  // carried over verbatim as `s41c-sag-04` Test 5. The scenario doc is kept and
+  // marked superseded, not deleted. Retirement decided 2026-09-05 by Dmytro
+  // Novyk (PO), Reading 1, recorded in
+  // `_bmad-output/implementation-artifacts/platform/spec-4-1c-require-section-access-gate.md`.
+  //
+  // The dead `user-management:edit` OR clause in `canEditS1` itself is NOT
+  // deleted here — that is Story 4.2's, coupled to seating root in the
+  // relationship tree.
 
   // docs/test-cases/user-management/access-control-adoption/umac-08-write-rejects-org-fields.md
   //
