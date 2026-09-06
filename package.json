@@ -16,6 +16,7 @@
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "db:seed": "prisma db seed",
+    "db:bootstrap:access-control": "node --import tsx scripts/bootstrap-access-control.ts",
     "db:dev:grant-root": "node --import tsx scripts/dev-grant-root.ts",
     "create:root": "npm run db:seed && npm run db:dev:grant-root",
     "db:import:population": "node --import tsx scripts/import-population.ts",
