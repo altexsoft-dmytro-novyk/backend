@@ -12,7 +12,9 @@ export interface CareerTimelineAccessPort {
    * `RW`; Colleague `—`), WIDENED by Story 3.2 with "edit implies read".
    *
    * INTERIM (v1.5): `AccessControlFacade.canAccessSection` does not answer
-   * `'profile:timeline'` yet (S1/S10/S11 only). Implemented as
+   * `'profile:timeline'` yet — the kernel matrix holds `profile:identity` /
+   * `profile:leave` / `profile:projects` only (the §3.2 S1 / §3.2 S10 /
+   * §3.2 S11 rows). Implemented as
    * `resolveAudiences(viewerId, [targetUserId]) ∩ { self, reporting, pp,
    * project }` OR `isAllowed(viewer, 'profile:timeline:write')` — the latter is
    * the timeline-scoped interim of the §2.4 Full-profile-access grant (Dmytro,

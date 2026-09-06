@@ -82,7 +82,8 @@ export class UpdateUserDto {
   createdBy?: string;
 
   // Organisational relationships (manager / reporting line / People Partner /
-  // department) are read-only through S1 for every audience — they change only
+  // department) are read-only through the §3.2 S1 (profile:identity) card for
+  // every audience — they change only
   // through Epic 4's organisational-relationship screen (§3.2 fn 1). Declared
   // here so `class-validator` SEES the key and rejects it with an explicit 400,
   // rather than the global `whitelist: true` pipe silently stripping it.
@@ -107,7 +108,7 @@ export class UpdateUserDto {
   @IsEmpty({ message: 'departmentId is not editable through this endpoint' })
   departmentId?: unknown;
 
-  // Employment status is Epic 2's fact table, not an S1 scalar; custom fields
+  // Employment status is Epic 2's fact table, not a §3.2 S1 scalar; custom fields
   // have their own Story 1.6 surface. Neither is editable here.
   @IsEmpty({
     message: 'employmentStatus is not editable through this endpoint',

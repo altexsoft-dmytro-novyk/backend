@@ -7,10 +7,11 @@ import {
 } from '../dtos/access-journal.response';
 
 // Story 4.1 — the `GET /users/:id/access-journal` handler. The read gate is
-// enforced HERE, not by `AccessControlGuard`: §3.4 admits only the subject's
+// enforced HERE, not by a route guard: §3.4 admits only the subject's
 // current Reporting-line manager or assigned People Partner — NOT self, NOT HR
-// Admin by functional role — which is neither the S1 `RequireFeatureForTarget`
-// audience nor a no-target capability. `401` for a missing/invalid token comes
+// Admin by functional role — which is neither the
+// `@RequireSectionAccess('profile:identity', 'read')` audience nor a no-target
+// `@RequireFeature` capability. `401` for a missing/invalid token comes
 // from the class-level `SessionGuard`.
 @Injectable()
 export class GetAccessJournalAction {

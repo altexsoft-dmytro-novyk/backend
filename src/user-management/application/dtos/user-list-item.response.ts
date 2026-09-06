@@ -1,7 +1,8 @@
 import type { UserListRow } from '../../domain/interfaces/user.repository.port';
 
 // um-list-08 — the fixed, fail-closed list-row projection: EXACTLY the 12
-// `GET /users/:id` S1-card fields plus `employmentStatus`. Deliberately NOT
+// `GET /users/:id` §3.2 S1 (profile:identity) card fields plus
+// `employmentStatus`. Deliberately NOT
 // `toUserResponse` (whole-row spread leaks `ttId`/`isActive`/`customFields`/
 // `createdAt`/`createdBy`) and NOT the `{ data, canEdit }` card envelope (that
 // is the detail route). Uniform for every viewer — per-row audience resolution

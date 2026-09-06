@@ -7,9 +7,10 @@ import {
 } from '../dtos/user-event.response';
 
 // Story 3.1 — the `GET /users/:id/events` handler. The read gate is enforced
-// HERE, not by `AccessControlGuard`: the career-timeline S9 read audience
-// EXCLUDES colleague, unlike the S1 `RequireFeatureForTarget` gate. `401` for a
-// missing/invalid token is produced by the class-level `SessionGuard`.
+// HERE, not by a route guard: the career-timeline §3.2 S9 read audience
+// EXCLUDES colleague, unlike `@RequireSectionAccess('profile:identity',
+// 'read')`, which admits any non-empty audience. `401` for a missing/invalid
+// token is produced by the class-level `SessionGuard`.
 @Injectable()
 export class GetUserEventsAction {
   constructor(

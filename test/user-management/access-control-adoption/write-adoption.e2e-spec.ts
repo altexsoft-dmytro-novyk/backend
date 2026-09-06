@@ -11,27 +11,32 @@ import { RunFixtures, bearer, bootstrapTestApp } from './fixtures';
  *     umac-08-write-rejects-org-fields.md
  *     umac-09-photo-write-self-only.md
  *
- * VARIANT A (product decision 2026-09-02, Dmytro Novyk). The employee identity
- * card (profile:identity) has **no separate functional permission**. The whole gate on
- * `PATCH /users/:id` is `canAccessSection(viewer, 'profile:identity', target) === 'write'` —
- * i.e. the target's reporting-line manager or assigned People Partner may edit;
- * self / colleague may not. §2.2's functional-permission half is NOT applied to
- * this section. The string `user-management:edit` survives only as the adapter's
- * internal routing key for the PATCH-gate branch. There is NO dependency on a
- * `user-management:edit` kernel seed.
+ * THE LIVE GATE (SCP 2026-09-04 D1, landed by PLAT-E4-S4.1c).
+ * `PATCH /users/:id` carries `@RequireSectionAccess('profile:identity',
+ * 'write')`, enforced by `SectionAccessGuard` through
+ * `AccessControlPort.hasSectionAccess`. It is a dual gate, AUDIENCE-FIRST:
+ * `canAccessSection(viewer, 'profile:identity', target) === 'write'` decides
+ * first — the target's reporting-line manager or assigned People Partner may
+ * edit; self / colleague may not — and only then is the functional half
+ * `isAllowed(viewer, 'profile:identity:write')` consulted, so a functional
+ * permission can never widen a resolved audience
+ * (`docs/architecture/access-control.md:19`, NORMATIVE). That functional key is
+ * held implicitly by every active employee through `DEFAULT_PERMISSIONS`
+ * (PLAT-E4-S4.1a), so there is NO dependency on a kernel seed for it.
  *
- * UPDATE 2026-09-03: `access-control-facade.adapter.ts` `canEditS1` now ALSO
- * honours a live `user-management:edit` FR grant as an OR-override on the base
- * section gate (what `scripts/dev-grant-root.ts` relies on). It only widens — a
- * `'none'` section result (deactivated / unknown target) stays closed. Covered
- * by the "OR-override" describe block below; a full rewrite of the per-section
- * predicates is tracked in the access-control deferred-work.
+ * HISTORY, because this file predates the gate. It was authored under
+ * "Variant A" (product decision 2026-09-02, Dmytro Novyk), where the gate was
+ * the audience half alone and `user-management:edit` was only the adapter's
+ * internal routing key; a 2026-09-03 change then added that key as an
+ * OR-override inside `canEditS1`. 4.1c moved the route onto the dual gate and
+ * retired the override's pinning tests (see the note above UMAC-08), and 4.1d
+ * deleted the last of that machinery. Every assertion below is unchanged
+ * throughout — the observable contract never moved.
  *
  * STATE (per group):
- *   - UMAC-07 — GREEN. `access-control-facade.adapter.ts` `isAllowedForTarget`'s
- *     `EDIT_USER_FEATURE` branch returns `canAccessSection('profile:identity') === 'write'`, so
- *     a reporting-line manager / assigned PP `PATCH` succeeds, and a
- *     colleague / self / unresolved `PATCH` is `403`.
+ *   - UMAC-07 — GREEN under the dual gate: a reporting-line manager / assigned
+ *     PP `PATCH` succeeds, and a colleague / self / unresolved `PATCH` is
+ *     `403`.
  *   - UMAC-08 — RED until Epic 1 Story 1.2 Stage 3. `UpdateUserDto` does not
  *     declare `manager` / `peoplePartner` / `department`, so `ValidationPipe`
  *     `whitelist: true` SILENTLY STRIPS them and the request `200`s on the
@@ -222,9 +227,11 @@ describe('UMAC-2 Stage 2 — PATCH / PUT photo write-path gates (e2e)', () => {
   // Novyk (PO), Reading 1, recorded in
   // `_bmad-output/implementation-artifacts/platform/spec-4-1c-require-section-access-gate.md`.
   //
-  // The dead `user-management:edit` OR clause in `canEditS1` itself is NOT
-  // deleted here — that is Story 4.2's, coupled to seating root in the
-  // relationship tree.
+  // The dead `user-management:edit` OR clause, and `canEditS1` with it, were
+  // deleted by PLAT-E4-S4.1d (PO ruling AF-2, 2026-09-06): the override had
+  // been off every live path since 4.1c, so Story 4.2 closes its scope item 1
+  // by verification rather than by deletion. 4.2 still owns
+  // `scripts/dev-grant-root.ts` and seating root in the relationship tree.
 
   // docs/test-cases/user-management/access-control-adoption/umac-08-write-rejects-org-fields.md
   //

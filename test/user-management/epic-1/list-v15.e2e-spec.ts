@@ -786,7 +786,11 @@ describe('Epic 1 · Story 1.5 — GET /users list/paginate/filter (e2e)', () => 
       const facade = testApp.app.get(AccessControlFacade, { strict: false });
 
       const isAllowedSpy = jest.spyOn(port, 'isAllowed');
-      const isAllowedForTargetSpy = jest.spyOn(port, 'isAllowedForTarget');
+      // PLAT-E4-S4.1d (2026-09-06): the `isAllowedForTarget` spy and its
+      // `not.toHaveBeenCalled()` assertion went with the port method itself
+      // (AF-1, PO ruling 2026-09-06). The constraint they pinned is now
+      // statically guaranteed — the method no longer exists to be called.
+      // The N+1 guard below is unchanged.
       const resolveAudiencesSpy = jest.spyOn(facade, 'resolveAudiences');
       const canAccessSectionSpy = jest.spyOn(facade, 'canAccessSection');
 
@@ -800,7 +804,6 @@ describe('Epic 1 · Story 1.5 — GET /users list/paginate/filter (e2e)', () => 
 
       expect(isAllowedSpy).toHaveBeenCalledTimes(1);
       expect(isAllowedSpy.mock.calls[0][1]).toBe('user-management:list');
-      expect(isAllowedForTargetSpy).not.toHaveBeenCalled();
       expect(resolveAudiencesSpy).not.toHaveBeenCalled();
       expect(canAccessSectionSpy).not.toHaveBeenCalled();
     });

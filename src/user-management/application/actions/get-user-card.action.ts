@@ -8,7 +8,8 @@ import {
 
 // CAP-3 — the `GET /users/:id` handler. Loads the target row (404 when absent,
 // same as the retired `GetUserAction`) and computes the read-only `canEdit`
-// dual-gate hint, then projects both through the S1-card envelope mapper.
+// dual-gate hint, then projects both through the §3.2 S1 (profile:identity)
+// card envelope mapper.
 //
 // The audience gate for the read itself is enforced upstream by
 // `SectionAccessGuard` (`@RequireSectionAccess('profile:identity', 'read')` —

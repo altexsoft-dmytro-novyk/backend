@@ -33,11 +33,18 @@ const ROOT_FR_ROLE = 'hr-admin';
 
 // Kept in sync with the `RequireFeature(...)` / `isAllowed(...)` call sites in
 // `src/user-management`. `user-management:read` is intentionally absent: the
-// S1 read gate is a pure audience/section decision with no FR half.
-// `user-management:edit` IS granted here: the identity-card edit gate honours it
-// as an OR override (see `access-control-facade.adapter.ts` `canEditS1`), which
-// is how root gets `canEdit: true` on every card — its own included — without a
-// reporting-line or People-Partner edge.
+// §3.2 S1 (profile:identity) read gate is a pure audience/section decision with
+// no FR half.
+//
+// `user-management:edit` is still granted here, but AS OF PLAT-E4-S4.1c IT NO
+// LONGER GRANTS ANYTHING. That story moved `PATCH /users/:id` and the `canEdit`
+// hint onto `@RequireSectionAccess('profile:identity', 'write')`, whose
+// functional half is `profile:identity:write`, and 4.1d deleted the last of the
+// old machinery. The gate is audience-first, so no functional grant can widen a
+// resolved audience (`docs/architecture/access-control.md:19`, NORMATIVE):
+// root now gets `canEdit: false` on any card it has no reporting-line or
+// People-Partner edge to. Removing the key from this list is Story 4.2's, coupled
+// to seating root in the reporting tree — until then it is an inert grant.
 const ROOT_PERMISSIONS: ReadonlyArray<{ key: string; description: string }> = [
   {
     key: 'user-management:create',

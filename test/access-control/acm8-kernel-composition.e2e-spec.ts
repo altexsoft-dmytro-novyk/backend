@@ -94,7 +94,7 @@ describe('ACM-8 Stage 2 — CAP-6 kernel composition (PostgreSQL)', () => {
     // It delegates to the facade; it is not the facade itself.
     expect(port).not.toBeInstanceOf(AccessControlFacade);
     expect(typeof port.isAllowed).toBe('function');
-    expect(typeof port.isAllowedForTarget).toBe('function');
+    expect(typeof port.hasSectionAccess).toBe('function');
   });
 
   // docs/test-cases/access-control-kernel/kernel-composition/acm8-kc-03-user-management-behavior-unchanged.md

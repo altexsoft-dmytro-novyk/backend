@@ -10,11 +10,6 @@ export type SectionAccessRequirement = 'read' | 'write';
 
 export interface AccessControlPort {
   isAllowed(userId: string, feature: string): Promise<boolean>;
-  isAllowedForTarget(
-    userId: string,
-    feature: string,
-    targetUserId: string,
-  ): Promise<boolean>;
   /**
    * The one question every section-gated route asks (SCP 2026-09-04 D3):
    * does this viewer reach `level` on `section` of `targetUserId`?
