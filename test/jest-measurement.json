@@ -5,7 +5,7 @@
   },
   "rootDir": ".",
   "testEnvironment": "node",
-  "testRegex": "\\.measurement-spec\\.ts$",
+  "testRegex": "measurement/[^/]*\\.measurement-spec\\.ts$",
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
   },
