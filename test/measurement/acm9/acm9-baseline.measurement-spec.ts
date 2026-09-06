@@ -318,10 +318,11 @@ describe('ACM9 PostgreSQL baseline (explicit opt-in)', () => {
           'single Jest worker; dedicated UUID fixture rows; no concurrent harness load',
         nullable_container_limits: null,
       };
-      const {
-        memory_free_bytes: _memoryFreeBytes,
-        ...hashedEnvironmentManifest
-      } = environmentManifest;
+      const hashedEnvironmentManifest = Object.fromEntries(
+        Object.entries(environmentManifest).filter(
+          ([key]) => key !== 'memory_free_bytes',
+        ),
+      );
       environmentHash = manifestHash(hashedEnvironmentManifest);
       await finalizeArtifact(artifact, {
         fixture_manifest: fixtureManifest,

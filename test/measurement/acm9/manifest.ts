@@ -53,7 +53,7 @@ export const resolveStatus = ({
   breach,
   comparable,
 }: {
-  breach: unknown | null;
+  breach: Record<string, unknown> | null;
   comparable: boolean;
 }): ArtifactStatus =>
   breach !== null ? 'FAIL' : comparable ? 'PASS' : 'INCOMPLETE';
