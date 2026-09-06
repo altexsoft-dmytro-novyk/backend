@@ -5,7 +5,7 @@
 // db:deploy -> db:seed -> db:bootstrap:access-control -> start:prod.
 //
 // Ownership is a SET OF SPECIFIC ROWS, not the contents of these tables: the
-// three canonical permission keys, the FR `hr-admin` policy, their three
+// six canonical permission keys, the FR `hr-admin` policy, their six
 // canonical grant pairs, the normalized root attachment, and the
 // `AccessControlBootstrap` singleton. Everything else in the same tables
 // belongs to administrators under a later approved catalog contract and is
@@ -31,6 +31,41 @@ export const CANONICAL_PERMISSIONS = [
   {
     key: 'user-management:list',
     description: 'List users in User Management.',
+  },
+  // PLAT-E4-S4.2a — the operator half of the root-operator set. Both keys are
+  // FEATURE keys with live gates: `org:relationships:write` is read by
+  // `relationships.controller.ts`, `departments.controller.ts` and
+  // `org-relationships-read-access-facade.adapter.ts`;
+  // `employee:departure:record` by `departures.controller.ts`. Neither appears
+  // in `SECTION_ACCESS_MATRIX` or `DEFAULT_PERMISSIONS`, so neither can reach a
+  // section decision.
+  {
+    key: 'org:relationships:write',
+    description: 'Write organisational relationships and department edges.',
+  },
+  {
+    key: 'employee:departure:record',
+    description: 'Record and remediate an employee departure.',
+  },
+  // PLAT-E4-S4.2a / PO ruling AF-2 (Dmytro Novyk, 2026-09-06) — a KNOWN,
+  // ACCEPTED DEVIATION, seeded deliberately against this spec's own
+  // recommendation. This is the one canonical key that WRITES a person's
+  // profile section, and its gate (`canEditTimeline`,
+  // `career-timeline-access-facade.adapter.ts` — `void targetUserId`, then
+  // `isAllowed` alone) has no audience half. Granting it here therefore gives
+  // every present and future holder of `hr-admin` org-wide write access to
+  // every employee's career timeline with no relationship to the target, which
+  // `docs/architecture/access-control.md:19` marks NORMATIVE against. The
+  // trade-off the ruling accepts: excluding it leaves the manual
+  // timeline-write route closed to everyone on a clean production install.
+  // Do NOT narrow this grant or add an audience check to the timeline gate as a
+  // drive-by; the deviation closes when `canEditTimeline` gains its audience
+  // half (the deferred DEC-UM-001 narrowing). Asserted on purpose by
+  // `docs/test-cases/user-management/access-control-adoption/
+  // s42a-op-06-delegated-hr-admin-timeline-write-accepted-deviation.md`.
+  {
+    key: 'profile:timeline:write',
+    description: 'Add or soft-delete career-timeline events.',
   },
 ] as const;
 
@@ -228,7 +263,7 @@ async function ensurePermissions(tx: Tx): Promise<string[]> {
   return ids;
 }
 
-/** Ensures the three canonical pairs are PRESENT — not that they are the only ones. */
+/** Ensures the six canonical pairs are PRESENT — not that they are the only ones. */
 async function ensureGrants(
   tx: Tx,
   policyId: string,
@@ -369,7 +404,7 @@ export async function bootstrapAccessControl(
 
       // Revalidate before commit. Everything between the first check and commit
       // is a window in which the root identity can change underneath a
-      // transaction that is about to grant it three permissions.
+      // transaction that is about to grant it six permissions.
       const stillEligible = await tx.user.findUnique({
         where: { id: root.id },
         select: { workEmail: true, isActive: true },
