@@ -92,6 +92,29 @@ export class UserRepository implements UserRepositoryPort {
   ): Promise<UserListPage> {
     const { employmentStatus, ...identity } = filter;
 
+    // The "All Employees" filter bar matches text case-insensitively: a search
+    // for `country=poland` finds `Poland` rows. Prisma's `mode: 'insensitive'`
+    // maps to Postgres `ILIKE`/`citext`-style comparison. Equality semantics are
+    // unchanged (still a whole-value match, not a substring) — only case folds.
+    // Non-text identity filters (`birthDay`, `birthMonth`, `companyJoinDate`)
+    // keep plain equality.
+    const ci = (value: string | undefined): Prisma.StringFilter | undefined =>
+      value === undefined
+        ? undefined
+        : { equals: value, mode: Prisma.QueryMode.insensitive };
+    const identityWhere: Prisma.UserWhereInput = {
+      firstName: ci(identity.firstName),
+      lastName: ci(identity.lastName),
+      position: ci(identity.position),
+      country: ci(identity.country),
+      city: ci(identity.city),
+      workEmail: ci(identity.workEmail),
+      workPhone: ci(identity.workPhone),
+      birthDay: identity.birthDay,
+      birthMonth: identity.birthMonth,
+      companyJoinDate: identity.companyJoinDate,
+    };
+
     // The current employment fact = the row with `validTo IS NULL`. "Dismissed"
     // means that row exists and is `status='dismissed'`; anything else
     // (including no current row at all) counts as active (README §6).
@@ -101,7 +124,7 @@ export class UserRepository implements UserRepositoryPort {
     const where: Prisma.UserWhereInput =
       employmentStatus === 'dismissed'
         ? {
-            ...identity,
+            ...identityWhere,
             // A dismissed employee stays filterable under
             // `?employmentStatus=dismissed` even once Epic 5's effective-departure
             // apply has flipped `User.isActive` to false (um-dep-03 T1). The
@@ -110,7 +133,7 @@ export class UserRepository implements UserRepositoryPort {
             employmentStatuses: currentDismissed,
           }
         : {
-            ...identity,
+            ...identityWhere,
             // Purged / departed rows are never on the default list (decisions §
             // "isActive is not a filter").
             isActive: true,

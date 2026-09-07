@@ -393,6 +393,79 @@ describe('Epic 1 · Story 1.5 — GET /users list/paginate/filter (e2e)', () => 
   });
 
   // ───────────────────────────────────────────────────────────────────────
+  // Text identity filters match case-insensitively (frontend "All Employees"
+  // filter bar). Whole-value equality is unchanged — only letter case folds.
+  // ───────────────────────────────────────────────────────────────────────
+  describe('text filters are case-insensitive', () => {
+    let ewaId: string;
+    let ewaEmail: string;
+    // A per-run country/city so the filtered assertions stay isolated but still
+    // exercise case folding (mixed-case seed value, differently-cased query).
+    let mixedCountry: string;
+    let mixedCity: string;
+
+    beforeEach(async () => {
+      mixedCountry = `Poland-${fx.runId}`;
+      mixedCity = `Kraków-${fx.runId}`;
+      const ewa = await fx.user('lci-ewa', {
+        firstName: 'Ewa',
+        lastName: 'Kowalska',
+        position: 'Senior Engineer',
+        city: mixedCity,
+        country: mixedCountry,
+      });
+      ewaId = ewa.id;
+      ewaEmail = ewa.workEmail;
+      await fx.user('lci-other', {
+        firstName: 'Marek',
+        lastName: 'Nowak',
+        position: 'Senior Engineer',
+        city: `Gdańsk-${fx.runId}`,
+        country: mixedCountry,
+      });
+    });
+
+    it('Test 1 — ?country and ?position match regardless of case', async () => {
+      const res = await list({
+        country: mixedCountry.toUpperCase(),
+        position: 'senior engineer',
+        pageSize: 100,
+      });
+      expect(res.status).toBe(200);
+      expect(idsOf(res.body)).toEqual(expect.arrayContaining([ewaId]));
+    });
+
+    it('Test 2 — ?firstName / ?lastName / ?city fold case', async () => {
+      const res = await list({
+        firstName: 'EWA',
+        lastName: 'kowalska',
+        city: mixedCity.toUpperCase(),
+        pageSize: 100,
+      });
+      expect(res.status).toBe(200);
+      expect(idsOf(res.body)).toEqual([ewaId]);
+    });
+
+    it('Test 3 — ?workEmail folds case (unique → exactly one row)', async () => {
+      const res = await list({
+        workEmail: ewaEmail.toUpperCase(),
+        pageSize: 100,
+      });
+      expect(res.status).toBe(200);
+      expect(idsOf(res.body)).toEqual([ewaId]);
+    });
+
+    it('Test 4 — equality is still whole-value: a substring does not match', async () => {
+      const res = await list({
+        country: mixedCountry.slice(0, 4),
+        pageSize: 100,
+      });
+      expect(res.status).toBe(200);
+      expect(idsOf(res.body)).not.toContain(ewaId);
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
   // um-list-05 · a dismissed employee drops out of the default list
   //   Test 1 GREEN characterization (both active → both present).
   //   Test 2 RED — the interim handler keys on `User.isActive` (still true for a
