@@ -42,3 +42,9 @@ yarn-error.log*
 # Prisma generated client (regenerated via postinstall)
 /src/generated
 
+
+# Real account exports (PII) — local only, never commit.
+prisma/seed-data/*.csv
+
+# Claude Code agent worktrees — local tooling artifacts, never committed.
+.claude/worktrees/

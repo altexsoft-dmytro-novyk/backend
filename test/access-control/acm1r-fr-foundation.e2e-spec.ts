@@ -319,7 +319,7 @@ afterAll(async () => {
 });
 
 describe('ACM-1 CAP-3 — production entrypoint is wired', () => {
-  it('exposes db:bootstrap:access-control as an npm script', async () => {
+  it('exposes db:bootstrap:access-control as an npm script', () => {
     // Break caught: without the named script every failure-path test below
     // could pass on a missing-script nonzero exit instead of on the behavior
     // it claims to prove. This test makes the red state unambiguous.
