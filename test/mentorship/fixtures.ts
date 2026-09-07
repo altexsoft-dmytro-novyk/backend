@@ -100,7 +100,8 @@ export interface PairShape {
   id?: string;
   mentorUserId?: string;
   menteeUserId?: string;
-  status?: 'active' | 'ended' | string;
+  /** Known values are `active` / `ended`; kept open — the exact set is a §2.1 ambiguity. */
+  status?: string;
   startedAt?: string | null;
   endedAt?: string | null;
   closureNote?: string;

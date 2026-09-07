@@ -60,7 +60,6 @@ describe('Provider verification — people-management-backend', () => {
       pactUrls: [PACT_FILE],
       logLevel: 'warn',
 
-
       stateHandlers: {
         'no session, and the address may or may not belong to an active user':
           async () => {
@@ -242,13 +241,18 @@ describe('Provider verification — people-management-backend', () => {
             await world.reportsTo(IDS.subject, IDS.viewer);
             await world.reportsTo(IDS.target, IDS.subject);
 
-            const blocked = await request(provider.app.getHttpServer())
+            // Straight at the real listener (like the verifier itself), not
+            // `getHttpServer()` — that returns `any` and the proxy path is
+            // exactly what this suite avoids.
+            const blocked = await request(provider.baseUrl)
               .post(`/api/v1/users/${IDS.subject}/departures`)
               .set('Authorization', `Bearer <token:${IDS.viewer}>`)
               .set('Idempotency-Key', '3b7d9e1a-2c4f-4a6b-8d0e-1f2a3b4c5d6e')
               .send({ effectiveDate: '2026-12-31', reason: 'Resignation' });
 
-            return { blockerVersion: blocked.body?.expectedBlockerVersion };
+            const body = blocked.body as
+              { expectedBlockerVersion?: string } | undefined;
+            return { blockerVersion: body?.expectedBlockerVersion ?? null };
           },
       },
     });
