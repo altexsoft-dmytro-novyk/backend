@@ -1,10 +1,13 @@
 import { Global, Module } from '@nestjs/common';
 import { AccessControlFacade } from './application/access-control.facade';
+import { FULL_PROFILE_ACCESS_PORT } from './domain/interfaces/full-profile-access.port';
 import { IDENTITY_PORT } from './domain/interfaces/identity.port';
 import { RELATIONSHIP_GRAPH_PORT } from './domain/interfaces/relationship-graph.port';
 import { AudienceResolverService } from './domain/services/audience-resolver.service';
+import { FullProfileOverlayService } from './domain/services/full-profile-overlay.service';
 import { FunctionalRoleEvaluatorService } from './domain/services/functional-role-evaluator.service';
 import { FUNCTIONAL_ROLE_REPOSITORY_PORT } from './domain/interfaces/functional-role.repository.port';
+import { PrismaFullProfileAccessAdapter } from './infrastructure/prisma-full-profile-access.adapter';
 import { PrismaFunctionalRoleRepository } from './infrastructure/prisma-functional-role.repository';
 import { PrismaIdentityAdapter } from './infrastructure/prisma-identity.adapter';
 import { PrismaRelationshipGraphAdapter } from './infrastructure/prisma-relationship-graph.adapter';
@@ -25,6 +28,7 @@ import { PrismaRelationshipGraphAdapter } from './infrastructure/prisma-relation
     AccessControlFacade,
     AudienceResolverService,
     FunctionalRoleEvaluatorService,
+    FullProfileOverlayService,
     {
       provide: RELATIONSHIP_GRAPH_PORT,
       useClass: PrismaRelationshipGraphAdapter,
@@ -36,6 +40,10 @@ import { PrismaRelationshipGraphAdapter } from './infrastructure/prisma-relation
     {
       provide: FUNCTIONAL_ROLE_REPOSITORY_PORT,
       useClass: PrismaFunctionalRoleRepository,
+    },
+    {
+      provide: FULL_PROFILE_ACCESS_PORT,
+      useClass: PrismaFullProfileAccessAdapter,
     },
   ],
   exports: [AccessControlFacade],

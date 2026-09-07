@@ -11,7 +11,14 @@
 // belongs to administrators under a later approved catalog contract and is
 // preserved. A rerun that pruned back to the canonical set would revoke
 // approved access on every deployment.
+//
+// PLAT-E4-S4.2c adds a SEVENTH owned row class: the one bootstrap-seeded
+// `FullProfileGrant` (§2.4 full-profile-access overlay, root as first
+// holder), plus its paired `AccessJournal` row. Same transaction, same
+// advisory lock, same "singleton absent -> create; singleton present ->
+// verify-or-no-op" shape as the FR-policy logic already here.
 import { PrismaPg } from '@prisma/adapter-pg';
+import { createHash } from 'node:crypto';
 import { uuidv7 } from 'uuidv7';
 import { PrismaClient } from '../../../generated/prisma/client';
 
@@ -293,6 +300,103 @@ async function attachmentExists(
   return rows.length > 0;
 }
 
+// ---------------------------------------------------------------------------
+// PLAT-E4-S4.2c — §2.4 full-profile-access overlay: seed root as the FIRST
+// holder. Same derivation as `access-journal-idempotency.ts`'s
+// `accessJournalIdempotencyKey` (user-management infrastructure), computed
+// locally rather than importing across the bounded-context boundary for this
+// one deploy-time script's own single write.
+// ---------------------------------------------------------------------------
+function journalIdempotencyKey(
+  actorUserId: string,
+  subjectUserId: string,
+  kind: string,
+  relationshipId: string,
+  operation: string,
+): string {
+  return createHash('sha256')
+    .update(
+      [actorUserId, subjectUserId, kind, relationshipId, operation].join('|'),
+    )
+    .digest('hex');
+}
+
+/**
+ * "Zero rows anywhere," NOT "no row for root specifically" (spec Always/
+ * Never lists).
+ *
+ * CORRECTED 2026-09-07 (John, PM, code-review finding): the original
+ * implementation locked every existing row with `FOR UPDATE` to guard
+ * against a concurrent first run racing past this check. That guard is
+ * redundant — `acquireBootstrapLock` (above) is taken BEFORE this read, for
+ * the whole bootstrap transaction, on every bootstrap run; no concurrent
+ * transaction can be inside this function at the same time regardless of any
+ * lock taken here. A row lock therefore added real overhead (locking every
+ * row in the table, unbounded as the holder set grows) for zero additional
+ * correctness. `LIMIT 1` turns this into a genuine existence probe instead of
+ * a full-table read. (The `FOR UPDATE`-refuses-aggregates note is retained
+ * only as a record of why a plain `SELECT count(*)` was never on the table:
+ * Postgres refuses `FOR UPDATE` combined with an aggregate function,
+ * independently verified against a live Postgres 18 — moot now that no lock
+ * is taken here at all.)
+ */
+async function fullProfileGrantsExistAnywhere(tx: Tx): Promise<boolean> {
+  const rows = await tx.$queryRawUnsafe<{ id: string }[]>(
+    `SELECT "id" FROM "full_profile_grants" LIMIT 1`,
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Singleton-absent branch only — the singleton-present branch is "verify or
+ * no-op," and there is nothing to verify against a per-holder identity here
+ * (Always: the condition is "zero rows anywhere," not "root's own row"), so a
+ * later administrator's grant to a second holder is left completely alone by
+ * every rerun.
+ *
+ * `grantedByUserId` stays NULL — the one sanctioned exception the CHECK
+ * constraint allows (root granting itself the first holder slot, mirroring
+ * `User.createdBy`'s self-reference for root, `prisma/seed.ts:149`). The
+ * paired `AccessJournal` row self-references root as BOTH actor and subject:
+ * `AccessJournal.actorUserId` is `NOT NULL` (`schema.prisma:101`), so it
+ * cannot be left empty the way `grantedByUserId` can.
+ */
+async function seedFullProfileGrantIfNone(
+  tx: Tx,
+  root: RootCandidate,
+): Promise<void> {
+  if (await fullProfileGrantsExistAnywhere(tx)) {
+    return;
+  }
+
+  const grantId = uuidv7();
+  await tx.$executeRawUnsafe(
+    `INSERT INTO "full_profile_grants"
+       ("id", "holderUserId", "grantedByUserId", "grantedAt", "revokedByUserId", "revokedAt")
+     VALUES ($1, $2, NULL, CURRENT_TIMESTAMP, NULL, NULL)`,
+    grantId,
+    root.id,
+  );
+
+  const after = { grantId, holderUserId: root.id, grantedByUserId: null };
+  await tx.$executeRawUnsafe(
+    `INSERT INTO "access_journal"
+       ("id", "actorUserId", "subjectUserId", "kind", "before", "after", "idempotencyKey")
+     VALUES ($1, $2, $3, 'full_profile_grant', NULL, $4::jsonb, $5)`,
+    uuidv7(),
+    root.id,
+    root.id,
+    JSON.stringify(after),
+    journalIdempotencyKey(
+      root.id,
+      root.id,
+      'full_profile_grant',
+      grantId,
+      'create',
+    ),
+  );
+}
+
 export async function bootstrapAccessControl(
   prisma: PrismaClient,
 ): Promise<void> {
@@ -401,6 +505,13 @@ export async function bootstrapAccessControl(
           policy.id,
         );
       }
+
+      // PLAT-E4-S4.2c — §2.4 full-profile-access overlay: seed root as the
+      // first holder. Independent table, independent lock-within-the-lock
+      // from the FR-policy logic above; order relative to it is not
+      // load-bearing (spec Code Map), placed here so it still runs before the
+      // pre-commit revalidation below.
+      await seedFullProfileGrantIfNone(tx, root);
 
       // Revalidate before commit. Everything between the first check and commit
       // is a window in which the root identity can change underneath a

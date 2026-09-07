@@ -5,6 +5,7 @@
   },
   "rootDir": ".",
   "setupFiles": ["<rootDir>/jest.setup-env.ts"],
+  "setupFilesAfterEnv": ["<rootDir>/jest.setup-full-profile-grants-sentinel.ts"],
   "testEnvironment": "node",
   "testRegex": ".e2e-spec.ts$",
   "transform": {
