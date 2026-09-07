@@ -49,8 +49,8 @@ services:
     image: axllent/mailpit:v1.28
     restart: unless-stopped
     ports:
-      - '1025:1025'
-      - '8025:8025'
+      - '${MAIL_PORT:-1025}:1025'
+      - '${MAILPIT_UI_PORT:-8025}:8025'
 
 volumes:
   pgdata:
