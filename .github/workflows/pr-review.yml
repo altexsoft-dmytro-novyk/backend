@@ -1,0 +1,27 @@
+name: Advisory PR code review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: advisory-pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: github.event.pull_request.user.type != 'Bot'
+    uses: altexsoft-dmytro-novyk/workplace/.github/workflows/pr-review.yml@main
+    with:
+      repository: ${{ github.repository }}
+      base_sha: ${{ github.event.pull_request.base.sha }}
+      head_sha: ${{ github.event.pull_request.head.sha }}
+      pull_request_number: ${{ github.event.pull_request.number }}
+      checkout_path: services/backend
+    secrets:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      SUBMODULES_TOKEN: ${{ secrets.SUBMODULES_TOKEN }}
