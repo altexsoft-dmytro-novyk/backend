@@ -1,5 +1,5 @@
 <!-- bmad:context -->
-<!-- Verified 2026-09-02 against 08931ad. Managed by bmad-project-context; edits inside this block are replaced on refresh. Keep anything you want preserved outside the markers. -->
+<!-- Verified 2026-09-08 against 49fd0c4. Managed by bmad-project-context; edits inside this block are replaced on refresh. Keep anything you want preserved outside the markers. -->
 
 ## backend (NestJS API)
 
@@ -10,6 +10,7 @@ NestJS 11 API for people management. PostgreSQL via Prisma 7. Path-scoped conven
 - Commit API changes here, not in the workspace root.
 - Never add new features under `src/modules/` — use a bounded context at `src/<context-name>/` with hexagonal layout (`application/`, `domain/`, `infrastructure/`).
 - Never edit applied files under `prisma/migrations/` or hand-edit `src/generated/`.
+- Never drop `db:bootstrap:access-control` from `package.json` scripts — 36 ACM1R e2e cases shell out to it, and a fresh deploy provisions no permission keys, no hr-admin role and no root attachment without it.
 
 ## Where things are
 
@@ -21,7 +22,9 @@ NestJS 11 API for people management. PostgreSQL via Prisma 7. Path-scoped conven
 ## Running and verifying
 
 - Run `nvm use` before any npm command — Node >=24 (`.nvmrc`).
-- E2e and measurement tests need Postgres running (`npm run db:up`); unit tests do not.
+- E2e, contract and measurement tests need Postgres running (`npm run db:up`); unit tests do not.
+- `npm run db:up` starts LocalStack and Mailpit alongside Postgres; magic-link mail lands in Mailpit's UI on 8025.
+- `npm run test:contract` verifies the pact the frontend records, read from the sibling checkout at `../frontend/pacts/` — it fails if that submodule is not checked out.
 
 ## Conventions that differ from defaults
 
@@ -34,5 +37,6 @@ NestJS 11 API for people management. PostgreSQL via Prisma 7. Path-scoped conven
 
 - E2e preconditions must be created via real API calls in the same file — never hardcoded placeholder IDs.
 - `application/actions/` must not `@Inject` port tokens; only domain services hold ports (workspace spine AD-2).
+- The access-control bootstrap entrypoint runs through `tsx`, a devDependency — it cannot run under `npm ci --omit=dev`.
 
 <!-- /bmad:context -->
