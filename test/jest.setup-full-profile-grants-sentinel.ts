@@ -33,9 +33,8 @@ import { PrismaClient } from '../src/generated/prisma/client';
 // `full_profile_grants` genuinely empty becomes the accidental "first
 // holder," permanently RESTRICT-blocking that suite's own later
 // `deleteMany` on its own users — a real regression this increment must not
-// cause (`acm1r-fr-foundation.e2e-spec.ts`'s pre-existing 16-failure baseline
-// must stay exactly as it is, and every sibling 4.2-increment suite must stay
-// green).
+// cause. Every sibling 4.2-increment suite, and `acm1r-fr-foundation.e2e-spec.ts`
+// (amended for the six-key canonical set, DEPT-4), must stay green.
 //
 // Fix: keep `full_profile_grants` PERMANENTLY non-empty for the life of this
 // whole e2e run, via one dedicated, permanent sentinel holder that no

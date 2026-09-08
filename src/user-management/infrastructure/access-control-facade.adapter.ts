@@ -71,7 +71,14 @@ export class AccessControlFacadeAdapter
       section,
       targetUserId,
     );
-    if (SECTION_ACCESS_RANK[resolved] < SECTION_ACCESS_RANK[level]) {
+    // Fail closed on an unrecognised level: a bare lookup would yield
+    // `undefined`, and `undefined < n` is `false`, so the deny below would be
+    // skipped and the gate would PASS. Type-unreachable today; one `??` is
+    // cheaper than relying on that staying true.
+    if (
+      (SECTION_ACCESS_RANK[resolved] ?? -1) <
+      (SECTION_ACCESS_RANK[level] ?? Number.POSITIVE_INFINITY)
+    ) {
       return false;
     }
     if (level === 'read') {

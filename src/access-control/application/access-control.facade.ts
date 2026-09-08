@@ -8,6 +8,13 @@ import { FunctionalRoleEvaluatorService } from '../domain/services/functional-ro
 export type SectionAccess = 'none' | 'read' | 'write';
 
 /**
+ * Constant merge order for the best-of-audience loop. Module scope, not a
+ * per-call literal — `access-control-facade.adapter.ts` declares the same table
+ * the same way.
+ */
+const RANK: Record<SectionAccess, number> = { none: 0, read: 1, write: 2 };
+
+/**
  * The authorization entry point other contexts consume (AD-9). Phase 0 exposes
  * audience resolution and base section access. A consumer must not simulate
  * either by reading policy rows or role flags.
@@ -72,7 +79,14 @@ export class AccessControlFacade {
     section: string,
     targetEmployeeId: string,
   ): Promise<SectionAccess> {
-    const row = SECTION_ACCESS_MATRIX[section];
+    // OWN keys only. `SECTION_ACCESS_MATRIX` is a plain object literal, so a
+    // bare `[section]` lookup returns inherited members for `'constructor'`,
+    // `'toString'`, `'__proto__'` — all truthy, all passing a `!row` guard, then
+    // resolving `'none'` for every audience and falling through to the overlay
+    // branch below. Fail-closed means unknown section keys never get past here.
+    const row = Object.hasOwn(SECTION_ACCESS_MATRIX, section)
+      ? SECTION_ACCESS_MATRIX[section]
+      : undefined;
     if (!row) {
       return 'none';
     }
@@ -84,7 +98,6 @@ export class AccessControlFacade {
       return 'none';
     }
 
-    const RANK: Record<SectionAccess, number> = { none: 0, read: 1, write: 2 };
     let best: SectionAccess = 'none';
     for (const audience of targetAudiences) {
       const cell = row[audience] ?? 'none';
