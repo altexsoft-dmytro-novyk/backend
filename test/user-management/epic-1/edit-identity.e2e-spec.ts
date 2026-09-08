@@ -31,7 +31,7 @@ import { S1_CARD_FIELDS, s1CardOf } from '../access-control-adoption/fixtures';
  * all-403 suite is removed, not left behind.
  *
  * ── SCOPE — data correctness, not entitlement ──────────────────────────────
- * *Who* may `PATCH /users/:id` (Variant A: `canAccessSection(v, 'S1', t) ===
+ * *Who* may `PATCH /users/:id` (Variant A: `canAccessSection(v, 'profile:identity', t) ===
  * 'write'` alone — reporting-line manager or assigned People Partner) is
  * asserted canonically by Epic 0 in
  * `access-control-adoption/write-adoption.e2e-spec.ts` (umac-07/08). This suite
@@ -126,9 +126,9 @@ describe('Epic 1 · Story 1.2 — PATCH /users/:id identity-card data correctnes
     testApp.prisma.user.findUnique({ where: { id } });
 
   // ───────────────────────────────────────────────────────────────────────────
-  // um-edit-01 — an entitled actor edits S1 identity fields; a read reflects it
+  // um-edit-01 — an entitled actor edits profile:identity fields; a read reflects it
   // ───────────────────────────────────────────────────────────────────────────
-  describe('um-edit-01 · entitled actor edits S1 identity fields [GREEN: characterization]', () => {
+  describe('um-edit-01 · entitled actor edits profile:identity fields [GREEN: characterization]', () => {
     it('um-edit-01 Test 1/2 — reporting-line manager PATCH { position, country, city, workPhone } → 200 partial merge; follow-up GET envelope reflects it', async () => {
       const bob = await fx.user('e01-bob', { firstName: 'Bob' });
       const alice = await fx.user('e01-alice', {
@@ -155,7 +155,7 @@ describe('Epic 1 · Story 1.2 — PATCH /users/:id identity-card data correctnes
         city: 'Berlin',
         workPhone: '+49 30 000000',
       });
-      // Partial merge: every unlisted S1 field is untouched.
+      // Partial merge: every unlisted profile:identity field is untouched.
       const wb = write.body as Record<string, unknown>;
       expect(wb.firstName).toBe(alice.firstName);
       expect(wb.lastName).toBe(alice.lastName);
@@ -177,7 +177,7 @@ describe('Epic 1 · Story 1.2 — PATCH /users/:id identity-card data correctnes
       expect(card.data.country).toBe('DE');
       expect(card.data.city).toBe('Berlin');
       expect(card.data.workPhone).toBe('+49 30 000000');
-      // `data` carries exactly the 12 S1-card keys — no ttId / isActive /
+      // `data` carries exactly the 12 profile:identity-card keys — no ttId / isActive /
       // customFields / createdAt / createdBy.
       expect(Object.keys(card.data).sort()).toEqual([...S1_CARD_FIELDS].sort());
       const persisted = await rowOf(alice.id);
@@ -311,7 +311,7 @@ describe('Epic 1 · Story 1.2 — PATCH /users/:id identity-card data correctnes
       });
       expect(write.status).toBe(409);
 
-      // `ttId` is not an S1-card field (AD-13) — assert directly against the row.
+      // `ttId` is not a profile:identity-card field (AD-13) — assert directly against the row.
       const persisted = await rowOf(alice.id);
       expect(persisted?.ttId).toBeNull();
       expect(persisted?.workPhone).toBeNull();
@@ -415,7 +415,7 @@ describe('Epic 1 · Story 1.2 — PATCH /users/:id identity-card data correctnes
   });
 
   // ───────────────────────────────────────────────────────────────────────────
-  // um-edit-06 — technical fields outside the S1 scalar surface → 400
+  // um-edit-06 — technical fields outside the profile:identity scalar surface → 400
   // ───────────────────────────────────────────────────────────────────────────
   describe('um-edit-06 · forbidden technical fields → 400', () => {
     const seedEntitled = async (tag: string) => {

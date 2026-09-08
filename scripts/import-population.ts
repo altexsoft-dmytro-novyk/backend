@@ -1,14 +1,25 @@
-// Deploy/operator entrypoint for the Story 1.1 seeded-population import (AD-16).
+// CI/test-harness and local-dev entrypoint for the Story 1.1 seeded-population
+// import (AD-16). Runs as `npm run db:import:population`.
 //
-// Runs as `npm run db:import:population`, in the binding deployment order
-// `db:deploy` -> `db:seed` (ACM-0 root User) -> `db:bootstrap:access-control`
-// (ACM-1) -> **this** -> `start:prod` (api-conventions.md, seed README).
+// CORRECTED 2026-09-07 (Dmytro Novyk, PO): this is NOT part of the real
+// production deploy sequence. A production install has no fixture roster to
+// auto-load — `docs/Accounts_template.csv` is deploy/test fixture data (one
+// pseudonymised row), not a real organisation. The real production path is
+// root signing in after `db:bootstrap:access-control` and importing the real
+// roster through `POST /users/import`, the same HTTP endpoint this script's
+// writer shares. Binding production order is `db:deploy` -> `db:seed` ->
+// `db:bootstrap:access-control` -> `start:prod`; this script runs neither
+// before nor as part of that sequence.
 //
-// It reads the delivered `docs/Accounts_template.csv` from the known repo path
+// This script is kept as a CI/test-harness and local-dev convenience: it
+// reads the delivered `docs/Accounts_template.csv` from the known repo path
 // and writes through the SAME import service / normalization / idempotent-upsert
 // contract as `POST /users/import` (the HTTP endpoint is upload-only and never
-// touches a server-local path). Re-runnable: a second run reports every row as
-// `updated`, `created: 0`, `departmentsCreated: 0`.
+// touches a server-local path), which is exactly why several e2e suites
+// (`um-seed-12`, `s42b-tr-01`, `s42d-ds-02`/`-04`/`-06`) use it as their real,
+// non-HTTP provisioning path instead of booting Nest for a fixture load.
+// Re-runnable: a second run reports every row as `updated`, `created: 0`,
+// `departmentsCreated: 0`.
 //
 // Like `prisma/seed.ts` and `scripts/bootstrap-access-control.ts`, this wires a
 // bare `PrismaClient` rather than booting Nest — the import writer

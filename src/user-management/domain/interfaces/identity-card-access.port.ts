@@ -1,9 +1,10 @@
-// UM-owned port for the one read-only authorization fact the S1 identity-card
+// UM-owned port for the one read-only authorization fact the identity-card
 // handler needs that the request guard cannot supply: whether this viewer
-// *would* be allowed to edit the target's S1 identity fields, computed on the
-// GET as a UI hint (`canEdit`). The audience gate for the read itself is the
-// AccessControlGuard's job via `ACCESS_CONTROL_PORT.isAllowedForTarget`, so it
-// is deliberately not exposed here.
+// *would* be allowed to edit the target's `profile:identity` fields, computed
+// on the GET as a UI hint (`canEdit`). The read gate itself is the
+// SectionAccessGuard's job via
+// `ACCESS_CONTROL_PORT.hasSectionAccess(..., 'read', ...)`, so it is
+// deliberately not exposed here.
 //
 // Named for the use case, not a facade passthrough. Its infrastructure
 // implementation is the single place — besides the guard-facing
@@ -12,11 +13,23 @@
 // through `IdentityCardAccessService`.
 export interface IdentityCardAccessPort {
   /**
-   * The identity-card edit decision, read-only. `true` iff the viewer either
-   * holds the live `user-management:edit` functional permission (OR override —
-   * e.g. the seeded root HR Admin), or has `write` section access to the
-   * target's S1 section (Variant A: reporting-line manager or assigned People
-   * Partner). `false`-closed for a viewer who is neither.
+   * The identity-card edit decision, read-only. It is the same question the
+   * `PATCH /users/:id` gate asks — `hasSectionAccess(viewer,
+   * 'profile:identity', 'write', target)` — answered on a route that is not
+   * gated by it, and resolved through the same adapter method so the hint and
+   * the gate cannot drift apart.
+   *
+   * That question is the SCP 2026-09-04 D1 **dual gate**, audience-first:
+   * `canAccessSection(viewer, 'profile:identity', target)` must already resolve
+   * to `write` (reporting-line manager or assigned People Partner — Self and
+   * Colleague are `read` per §3.2), and only then must `isAllowed(viewer,
+   * 'profile:identity:write')` hold, which every active employee satisfies via
+   * `DEFAULT_PERMISSIONS`. The functional half can only subtract: it is never
+   * consulted for an audience the first half denied
+   * (`docs/architecture/access-control.md:19`, NORMATIVE). The pre-4.1c
+   * `user-management:edit` OR override is gone from this path.
+   * `false`-closed for everyone else, including a `'none'` (deactivated or
+   * unknown) target.
    */
   canEditIdentityCard(viewerId: string, targetUserId: string): Promise<boolean>;
 }

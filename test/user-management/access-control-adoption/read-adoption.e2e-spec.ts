@@ -19,14 +19,14 @@ import {
  *     umac-03-assigned-pp-read.md
  *     umac-04-colleague-read-s1-card.md
  *
- * STATE: green. `UMAC-1-production` shipped the S1-card DTO + `{ data, canEdit }`
+ * STATE: green. `UMAC-1-production` shipped the profile:identity-card DTO + `{ data, canEdit }`
  * envelope and rebound `ACCESS_CONTROL_PORT` to the real
  * `AccessControlFacade`-backed adapter, so `findOne` returns the envelope and
  * the whole-row technical fields are gone.
  *
  * `canEdit` under Variant A (product decision 2026-09-02 — the identity card has
  * NO separate functional permission; the whole gate is
- * `canAccessSection(V,'S1',T) === 'write'`):
+ * `canAccessSection(V,'profile:identity',T) === 'write'`):
  *   - self (UMAC-01): `canAccessSection` → `'read'` → `canEdit: false`.
  *   - reporting-line manager (UMAC-02) / assigned PP (UMAC-03):
  *     `canAccessSection` → `'write'` → `canEdit: true`.
@@ -37,7 +37,7 @@ import {
  * overrides. Fixtures seed real `User` + `Relationship` rows and issue
  * `Bearer <token:<seeded-uuid>>`.
  */
-describe('UMAC-1 Stage 2 — GET /users/:id returns the S1 identity card (e2e)', () => {
+describe('UMAC-1 Stage 2 — GET /users/:id returns the profile:identity card (e2e)', () => {
   let testApp: TestApp;
   let fx: RunFixtures;
 
@@ -64,7 +64,7 @@ describe('UMAC-1 Stage 2 — GET /users/:id returns the S1 identity card (e2e)',
       .set('authorization', bearer(viewerId));
 
   // docs/test-cases/user-management/access-control-adoption/umac-01-self-read-s1-card.md
-  it('UMAC-01 · Self reads own profile → 200 with exactly the S1 identity card', async () => {
+  it('UMAC-01 · Self reads own profile → 200 with exactly the profile:identity card', async () => {
     const viewer = await fx.user('umac01-self', {
       firstName: 'Self',
       birthDay: 3,
@@ -74,13 +74,13 @@ describe('UMAC-1 Stage 2 — GET /users/:id returns the S1 identity card (e2e)',
     const res = await getUser(viewer.id, viewer.id);
 
     expect(res.status).toBe(200);
-    // Variant A: Self's `canAccessSection(V,'S1',V)` → 'read' (S1 is read-only
+    // Variant A: Self's `canAccessSection(V,'profile:identity',V)` → 'read' (profile:identity is read-only
     // for self; only the photo is Self-writable) → `canEdit` false.
     expectExactS1CardEnvelope(res.body, s1CardOf(viewer), false);
   });
 
   // docs/test-cases/user-management/access-control-adoption/umac-02-reporting-line-viewer-read.md
-  describe('UMAC-02 · Reporting-line viewer reads a report → 200 with the S1 card', () => {
+  describe('UMAC-02 · Reporting-line viewer reads a report → 200 with the profile:identity card', () => {
     it('UMAC-02 Test 1 — direct report', async () => {
       const viewer = await fx.user('umac02-manager', { firstName: 'Manager' });
       const target = await fx.user('umac02-report', { firstName: 'Report' });
@@ -115,7 +115,7 @@ describe('UMAC-1 Stage 2 — GET /users/:id returns the S1 identity card (e2e)',
   });
 
   // docs/test-cases/user-management/access-control-adoption/umac-03-assigned-pp-read.md
-  it('UMAC-03 · Assigned People Partner reads an employee → 200 with the S1 card', async () => {
+  it('UMAC-03 · Assigned People Partner reads an employee → 200 with the profile:identity card', async () => {
     const viewer = await fx.user('umac03-pp', { firstName: 'PeoplePartner' });
     const target = await fx.user('umac03-employee', { firstName: 'Employee' });
     // V is T's directly-assigned People Partner — V resolves `pp` over T.
@@ -130,7 +130,7 @@ describe('UMAC-1 Stage 2 — GET /users/:id returns the S1 identity card (e2e)',
   });
 
   // docs/test-cases/user-management/access-control-adoption/umac-04-colleague-read-s1-card.md
-  it('UMAC-04 · Colleague / unrelated active session reads a profile → 200 with the same S1 card', async () => {
+  it('UMAC-04 · Colleague / unrelated active session reads a profile → 200 with the same profile:identity card', async () => {
     const viewer = await fx.user('umac04-colleague', {
       firstName: 'Colleague',
     });
@@ -141,14 +141,14 @@ describe('UMAC-1 Stage 2 — GET /users/:id returns the S1 identity card (e2e)',
       workPhone: '+48 999 888 777',
     });
     // No Relationship edge either direction, V ≠ T → V's audience over T is the
-    // `colleague` floor only. §3.2 S1 row is `R` for the Colleague column, so
-    // this is a POSITIVE test: 200 with the identical S1 field set.
+    // `colleague` floor only. §3.2 profile:identity row is `R` for the Colleague column, so
+    // this is a POSITIVE test: 200 with the identical profile:identity field set.
 
     const res = await getUser(target.id, viewer.id);
 
     expect(res.status).toBe(200);
-    // Colleague: `canAccessSection(V,'S1',T)` → 'read', so `canEdit` is false.
-    // Unlike reporting / pp, a colleague never gains S1 write access.
+    // Colleague: `canAccessSection(V,'profile:identity',T)` → 'read', so `canEdit` is false.
+    // Unlike reporting / pp, a colleague never gains profile:identity write access.
     expectExactS1CardEnvelope(res.body, s1CardOf(target), false);
   });
 });

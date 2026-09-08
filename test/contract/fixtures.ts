@@ -126,7 +126,11 @@ export class ContractWorld {
   }
 
   /** Idempotent: the row survives across interactions, its state does not. */
-  async user(id: string, persona: string, position = 'Engineer'): Promise<void> {
+  async user(
+    id: string,
+    persona: string,
+    position = 'Engineer',
+  ): Promise<void> {
     await this.prisma.user.upsert({
       where: { id },
       update: { isActive: true, position },
@@ -239,7 +243,11 @@ export class ContractWorld {
   async departure(
     userId: string,
     id: string,
-    overrides: { state?: 'scheduled' | 'processing' | 'retry_wait' | 'applied'; attempts?: number; lastError?: string } = {},
+    overrides: {
+      state?: 'scheduled' | 'processing' | 'retry_wait' | 'applied';
+      attempts?: number;
+      lastError?: string;
+    } = {},
   ): Promise<void> {
     await this.prisma.departure.create({
       data: {
@@ -285,6 +293,8 @@ export class ContractWorld {
     await this.prisma.policy.deleteMany({
       where: { id: { in: [...this.createdPolicyIds] } },
     });
-    await this.prisma.user.deleteMany({ where: { id: { in: OWNED_USER_IDS } } });
+    await this.prisma.user.deleteMany({
+      where: { id: { in: OWNED_USER_IDS } },
+    });
   }
 }

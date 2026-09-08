@@ -8,11 +8,14 @@ import {
 
 // CAP-3 — the `GET /users/:id` handler. Loads the target row (404 when absent,
 // same as the retired `GetUserAction`) and computes the read-only `canEdit`
-// dual-gate hint, then projects both through the S1-card envelope mapper.
+// dual-gate hint, then projects both through the §3.2 S1 (profile:identity)
+// card envelope mapper.
 //
 // The audience gate for the read itself is enforced upstream by
-// `AccessControlGuard` (`RequireFeatureForTarget('user-management:read')`);
-// this action runs only once that has passed.
+// `SectionAccessGuard` (`@RequireSectionAccess('profile:identity', 'read')` —
+// PLAT-E4-S4.1c); this action runs only once that has passed. The `canEdit`
+// hint it computes is the same gate's `'write'` question, resolved through the
+// same `hasSectionAccess` call the `PATCH /users/:id` gate makes.
 @Injectable()
 export class GetUserCardAction {
   constructor(

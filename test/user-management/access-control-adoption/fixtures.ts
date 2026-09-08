@@ -34,7 +34,8 @@ export const S1_CARD_FIELDS = [
   'companyJoinDate',
 ] as const;
 
-// Non-S1 technical fields the S1-card DTO (Story 0.1) must DROP from the body.
+// Technical fields outside §3.2 S1 (profile:identity) that the card DTO
+// (Story 0.1) must DROP from the body.
 // Under the current interim adapter `toUserResponse` spreads the whole `User`
 // row, so every one of these is still present — which is what makes the
 // UMAC-01..04 body assertions committed-red.
@@ -116,7 +117,8 @@ export class RunFixtures {
   }
 
   /**
-   * A real, active-by-default `User` row with every S1 field populated so the
+   * A real, active-by-default `User` row with every §3.2 S1 field populated so
+   * the
    * card assertions have concrete values to match. `createdBy` self-references
    * the generated id (the first-row pattern used by seed.ts / acm0), so no
    * separate fixture-owner row is needed.
@@ -158,7 +160,7 @@ export class RunFixtures {
    * `prisma-relationship-graph.adapter.ts` walks upward from `userId` through
    * `type='direct'` rows and grants `reporting` to whoever sits at
    * `reportsToUserId` — so `{ userId: subordinate, reportsToUserId: manager }`
-   * makes `manager` resolve `reporting` (S1 `write`) over `subordinate`.
+   * makes `manager` resolve `reporting` (§3.2 S1 `write`) over `subordinate`.
    * Verified against acm5-section-access.e2e-spec.ts (ReportingViewer /
    * ReportingTarget) and acm3-inactive-identity.e2e-spec.ts.
    */
@@ -175,7 +177,7 @@ export class RunFixtures {
   /**
    * A real directly-assigned People Partner edge: `pp` is `employee`'s PP.
    * The PP branch of the graph adapter matches `type='people_partner'` where
-   * `reportsToUserId = viewer` — so `pp` resolves the `pp` audience (S1
+   * `reportsToUserId = viewer` — so `pp` resolves the `pp` audience (§3.2 S1
    * `write`) over `employee`.
    */
   async peoplePartnerOf(employeeId: string, ppId: string): Promise<void> {
@@ -291,7 +293,7 @@ export class RunFixtures {
   }
 }
 
-/** Assert the response body is EXACTLY the S1 identity card and nothing else. */
+/** Assert the body is EXACTLY the §3.2 S1 identity card and nothing else. */
 export function expectExactS1Card(
   body: unknown,
   expected: Record<string, unknown>,
@@ -307,7 +309,7 @@ export function expectExactS1Card(
 
 /**
  * Assert the `GET /users/:id` success body is EXACTLY the read envelope
- * `{ data, canEdit }` (CAP-3): `body.data` deep-equals the S1 identity card,
+ * `{ data, canEdit }` (CAP-3): `body.data` deep-equals the §3.2 S1 identity card,
  * `body.canEdit === expectedCanEdit`, `Object.keys(body)` is exactly
  * `['canEdit','data']`, and every `NON_S1_FIELDS` technical field is absent
  * from `body.data`.
@@ -315,7 +317,7 @@ export function expectExactS1Card(
  * Committed-red today: the interim adapter leaves `findOne` on the whole-row
  * `toUserResponse`, so the body is the bare `User` row — not enveloped, with
  * `data` / `canEdit` undefined and the technical fields present. Goes green
- * when `UMAC-1-production` ships the S1-card DTO + envelope.
+ * when `UMAC-1-production` ships the §3.2 S1 card DTO + envelope.
  */
 export function expectExactS1CardEnvelope(
   body: unknown,
@@ -330,7 +332,7 @@ export function expectExactS1CardEnvelope(
   expectExactS1Card(b.data, expectedCard);
 }
 
-/** The exact S1 card a seeded `User` row must project to on `GET /users/:id`. */
+/** The exact §3.2 S1 card a seeded `User` row must project to on `GET /users/:id`. */
 export function s1CardOf(user: User): Record<string, unknown> {
   return {
     id: user.id,

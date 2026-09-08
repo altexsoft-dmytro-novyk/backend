@@ -23,8 +23,10 @@ const INTERIM_ROOT_EMAIL_PREFIX = 'interim-root-';
  *
  *  1. **Real session token** — an `Authorization: Bearer <jwt>` minted by
  *     `POST /auth/magic-link/consume`. Verified (signature + `exp`) with
- *     `SESSION_JWT_SECRET`; resolves to `{ userId: sub }`. This is the only path
- *     enabled in production.
+ *     `SESSION_JWT_SECRET`, then the `sub` is confirmed to still name an active
+ *     `User` before it resolves to `{ userId: sub }` — a token whose owner was
+ *     deleted or deactivated (or wiped by a DB reset) is unresolved, not a live
+ *     session. This is the only path enabled in production.
  *
  *  2. **`Bearer <token:<persona>>` dev shorthand** — folded in from the retired
  *     interim adapter, but ONLY when `ALLOW_TEST_SESSION_TOKENS` is set (Joi
@@ -67,10 +69,29 @@ export class JwtSessionResolverAdapter implements SessionResolverPort {
     if (!session) {
       const raw = authorizationHeader.replace(BEARER_PREFIX, '');
       const payload = verifySessionJwt(raw, this.jwtSecret);
-      session = payload ? { userId: payload.sub } : null;
+      session = payload ? await this.resolveJwtSubject(payload.sub) : null;
     }
 
     return this.applyEffectiveDepartureCutoff(session);
+  }
+
+  /**
+   * A signature-valid, unexpired JWT is necessary but not sufficient: the `sub`
+   * must still name an active `User`. A token minted before the row was deleted
+   * or deactivated (or before a database reset) verifies cryptographically but
+   * must resolve to `null` — the same unresolved-session `401` the persona path
+   * already returns for a bogus `<persona>`. The JWT is stateless, so this is
+   * the only place staleness can be caught.
+   */
+  private async resolveJwtSubject(sub: string): Promise<Session | null> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: sub },
+      select: { id: true, isActive: true },
+    });
+    if (!user || !user.isActive) {
+      return null;
+    }
+    return { userId: user.id };
   }
 
   /**

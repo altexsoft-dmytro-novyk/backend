@@ -28,10 +28,8 @@ import { ListUsersAction } from '../actions/list-users.action';
 import { SoftDeleteUserEventAction } from '../actions/soft-delete-user-event.action';
 import { UploadUserPhotoAction } from '../actions/upload-user-photo.action';
 import { CurrentSession } from '../decorators/current-session.decorator';
-import {
-  RequireFeature,
-  RequireFeatureForTarget,
-} from '../decorators/require-feature.decorator';
+import { RequireFeature } from '../decorators/require-feature.decorator';
+import { RequireSectionAccess } from '../decorators/require-section-access.decorator';
 import { SelfOnly } from '../decorators/self-only.decorator';
 import { ListUsersQueryDto } from '../dtos/list-users-query.dto';
 import { CreateUserEventDto } from '../dtos/create-user-event.dto';
@@ -47,8 +45,10 @@ import type {
   UserEventsEnvelope,
 } from '../dtos/user-event.response';
 import { AccessControlGuard } from '../guards/access-control.guard';
+import { SectionAccessGuard } from '../guards/section-access.guard';
 import { SelfOnlyGuard } from '../guards/self-only.guard';
 import { SessionGuard } from '../guards/session.guard';
+import { PROFILE_IDENTITY_SECTION } from '../../domain/constants/section-keys';
 import type { Session } from '../../domain/interfaces/session-resolver.port';
 import { PaginatedResponseDto } from '../../../common/dtos/paginated-response.dto';
 
@@ -56,8 +56,11 @@ import { PaginatedResponseDto } from '../../../common/dtos/paginated-response.dt
 // `POST /users` required (AD-21 / seed README) — no new `user-management:import`
 // key. In the seeded system this key is held only by the HR-Admin root.
 const IMPORT_POPULATION_FEATURE = 'user-management:create';
-const EDIT_USER_FEATURE = 'user-management:edit';
-const READ_USER_FEATURE = 'user-management:read';
+// `user-management:edit` / `user-management:read` are gone from this file:
+// PLAT-E4-S4.1c moved `GET`/`PATCH /users/:id` off the per-feature
+// target-scoped gate onto `@RequireSectionAccess`. The two constants had no
+// remaining reference here, and an unreferenced const is a lint error — the
+// dead *adapter* branches that still name those keys are 4.1d's to remove.
 const DEACTIVATE_USER_FEATURE = 'user-management:deactivate';
 const LIST_USERS_FEATURE = 'user-management:list';
 
@@ -85,7 +88,7 @@ const PHOTO_MAX_BYTES = 5 * 1024 * 1024; // 5 MiB
 const PHOTO_ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp'];
 
 @Controller('users')
-@UseGuards(SessionGuard, AccessControlGuard, SelfOnlyGuard)
+@UseGuards(SessionGuard, AccessControlGuard, SectionAccessGuard, SelfOnlyGuard)
 export class UsersController {
   constructor(
     private readonly editUserAction: EditUserAction,
@@ -147,8 +150,12 @@ export class UsersController {
     return this.importPopulationAction.execute(file.buffer, session.userId);
   }
 
+  // Read gate: any non-empty §3.2 audience over an active target reaches at
+  // least `read` on `profile:identity`, so `write` (reporting line / People
+  // Partner) satisfies it too; an empty audience — a deactivated or unknown
+  // target — resolves `none` and denies `403`.
   @Get(':id')
-  @RequireFeatureForTarget(READ_USER_FEATURE)
+  @RequireSectionAccess(PROFILE_IDENTITY_SECTION, 'read')
   async findOne(
     @CurrentSession() session: Session,
     @Param('id') id: string,
@@ -159,7 +166,8 @@ export class UsersController {
   // Distinct path from `:id` (`:id/events` never collides with `:id`); declared
   // beside the other `:id` routes. Read gate is INSIDE the action — the
   // career-timeline S9 read audience excludes colleague, so it is NOT
-  // `@RequireFeatureForTarget` (that is the S1 audience). `SessionGuard`
+  // `@RequireSectionAccess('profile:identity', 'read')` (that is the
+  // identity-card audience). `SessionGuard`
   // produces the `401` for a missing/invalid token.
   @Get(':id/events')
   async findEvents(
@@ -199,8 +207,10 @@ export class UsersController {
     await this.softDeleteUserEventAction.execute(session.userId, id, eventId);
   }
 
+  // Write gate: the SCP 2026-09-04 D1 dual gate, audience-first. The very same
+  // question backs the `canEdit` hint on the GET above.
   @Patch(':id')
-  @RequireFeatureForTarget(EDIT_USER_FEATURE)
+  @RequireSectionAccess(PROFILE_IDENTITY_SECTION, 'write')
   async update(
     @CurrentSession() session: Session,
     @Param('id') id: string,

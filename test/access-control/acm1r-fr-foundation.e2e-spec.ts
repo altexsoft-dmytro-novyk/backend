@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { uuidv7 } from 'uuidv7';
 import { PrismaClient } from '../../src/generated/prisma/client';
+import { CANONICAL_PERMISSIONS } from '../../src/access-control/infrastructure/bootstrap/access-control-bootstrap';
 
 // ACM-1R Stage 2 — CAP-3 functional-role data foundation.
 //
@@ -48,11 +49,14 @@ const execFileAsync = promisify(execFile);
 const backendRoot = `${__dirname}/../..`;
 const runId = `acm1r-${Date.now()}-${uuidv7()}`;
 
-const CANONICAL_KEYS = [
-  'user-management:create',
-  'user-management:deactivate',
-  'user-management:list',
-] as const;
+// Derived from the one source of truth the production bootstrap uses, so this
+// suite tracks the canonical set automatically as it changes (3 keys pre-Epic-4,
+// 6 after PLAT-E4-S4.2a / AF-2, 5 after the DEPT-2 timeline-key removal). Exact
+// set MEMBERSHIP is asserted by `s42a-op-bootstrap-canonical-set.e2e-spec.ts`;
+// this suite asserts the invariants (drift, locking, uniqueness, FK shape) and
+// only needs the cardinality.
+const CANONICAL_KEYS = CANONICAL_PERMISSIONS.map(({ key }) => key);
+const CANONICAL_COUNT = CANONICAL_KEYS.length;
 
 type CommandRun = { exitCode: number; output: string };
 
@@ -331,7 +335,7 @@ describe('ACM-1 CAP-3 — production entrypoint is wired', () => {
 });
 
 describe('ACM1-FB-01..07 — a fresh database ends up with exactly the canonical set', () => {
-  it('ACM1-FB-01: seeds exactly the three canonical permission keys', async () => {
+  it('ACM1-FB-01: seeds exactly the canonical permission keys', async () => {
     // Break caught: a fourth default permission silently widens hr-admin.
     const root = await seedRoot();
     expect(await countOf('Permissions')).toBe(0);
@@ -342,7 +346,7 @@ describe('ACM1-FB-01..07 — a fresh database ends up with exactly the canonical
       `SELECT key FROM "Permissions" ORDER BY key`,
     );
     expect(rows.map(({ key }) => key)).toEqual([...CANONICAL_KEYS].sort());
-    expect(await countOf('Permissions')).toBe(3);
+    expect(await countOf('Permissions')).toBe(CANONICAL_COUNT);
   });
 
   it('ACM1-FB-02 and ACM1-FB-07: seeds one FR hr-admin policy carrying no target', async () => {
@@ -372,7 +376,7 @@ describe('ACM1-FB-01..07 — a fresh database ends up with exactly the canonical
     });
   });
 
-  it('ACM1-FB-03: grants exactly the three seeded permissions to the role', async () => {
+  it('ACM1-FB-03: grants exactly the seeded permissions to the role', async () => {
     // Break caught: a missing grant leaves isAllowed false for a canonical key.
     const root = await seedRoot();
 
@@ -383,12 +387,12 @@ describe('ACM1-FB-01..07 — a fresh database ends up with exactly the canonical
       `SELECT "permissionId", "policyType" FROM "PolicyPermissions" WHERE "policyId" = $1`,
       policyId,
     );
-    expect(grants).toHaveLength(3);
+    expect(grants).toHaveLength(CANONICAL_COUNT);
     expect(grants.every(({ policyType }) => policyType === 'FR')).toBe(true);
     expect(grants.map(({ permissionId }) => permissionId).sort()).toEqual(
       (await permissionIds()).sort(),
     );
-    expect(await countOf('PolicyPermissions')).toBe(3);
+    expect(await countOf('PolicyPermissions')).toBe(CANONICAL_COUNT);
   });
 
   it('ACM1-FB-04: attaches the one root User and records provenance', async () => {
@@ -429,8 +433,8 @@ describe('ACM1-FB-01..07 — a fresh database ends up with exactly the canonical
     expect(await permissionIds()).toEqual(before.permissions);
     expect(await frPolicyId()).toEqual(before.policy);
     expect(await bootstrapSingleton()).toEqual(before.singleton);
-    expect(await countOf('Permissions')).toBe(3);
-    expect(await countOf('PolicyPermissions')).toBe(3);
+    expect(await countOf('Permissions')).toBe(CANONICAL_COUNT);
+    expect(await countOf('PolicyPermissions')).toBe(CANONICAL_COUNT);
     expect(await countOf('UserPolicies')).toBe(1);
   });
 
@@ -443,8 +447,8 @@ describe('ACM1-FB-01..07 — a fresh database ends up with exactly the canonical
     expect((await runBootstrap(root.email)).exitCode).toBe(0);
 
     expect(await countOf('Policies')).toBe(1);
-    expect(await countOf('Permissions')).toBe(3);
-    expect(await countOf('PolicyPermissions')).toBe(3);
+    expect(await countOf('Permissions')).toBe(CANONICAL_COUNT);
+    expect(await countOf('PolicyPermissions')).toBe(CANONICAL_COUNT);
     const attachments = await sql<{ userId: string }>(
       `SELECT "userId" FROM "UserPolicies"`,
     );
@@ -639,8 +643,8 @@ describe('ACM1-FB-09, ACM1R-FB-12, ACM1R-FB-13 — uniqueness, references, and t
       /duplicate key value|unique constraint|primary key/i,
     );
 
-    expect(await countOf('Permissions')).toBe(3);
-    expect(await countOf('PolicyPermissions')).toBe(3);
+    expect(await countOf('Permissions')).toBe(CANONICAL_COUNT);
+    expect(await countOf('PolicyPermissions')).toBe(CANONICAL_COUNT);
     expect(await countOf('UserPolicies')).toBe(1);
   });
 
@@ -661,7 +665,7 @@ describe('ACM1-FB-09, ACM1R-FB-12, ACM1R-FB-13 — uniqueness, references, and t
         ),
       /foreign key constraint/i,
     );
-    expect(await countOf('PolicyPermissions')).toBe(3);
+    expect(await countOf('PolicyPermissions')).toBe(CANONICAL_COUNT);
 
     const indexes = await sql<{ indexdef: string }>(
       `SELECT indexdef FROM pg_indexes WHERE tablename = 'PolicyPermissions'`,
@@ -786,7 +790,7 @@ describe('ACM1R-FB-15 — ON DELETE RESTRICT on all four functional-role-side fo
       /foreign key constraint|still referenced/i,
     );
 
-    expect(await countOf('Permissions')).toBe(3);
+    expect(await countOf('Permissions')).toBe(CANONICAL_COUNT);
     expect(await countOf('Policies')).toBe(1);
     expect(await countOf('AccessControlBootstrap')).toBe(1);
     expect(
@@ -817,7 +821,8 @@ describe('ACM1R-FB-16 — a renamed canonical key is absent, not different', () 
 
     expect((await runBootstrap(root.email)).exitCode).toBe(0);
 
-    expect(await countOf('Permissions')).toBe(4);
+    // canonical set + the one renamed row the bootstrap must NOT touch
+    expect(await countOf('Permissions')).toBe(CANONICAL_COUNT + 1);
     const [restored] = await sql<{ id: string }>(
       `SELECT id FROM "Permissions" WHERE key = $1`,
       CANONICAL_KEYS[0],
@@ -830,7 +835,7 @@ describe('ACM1R-FB-16 — a renamed canonical key is absent, not different', () 
     );
     expect(stillRenamed.id).toBe(renamedId);
 
-    expect(await countOf('PolicyPermissions')).toBe(4);
+    expect(await countOf('PolicyPermissions')).toBe(CANONICAL_COUNT + 1);
     const preserved = await sql<{ permissionId: string }>(
       `SELECT "permissionId" FROM "PolicyPermissions" WHERE "permissionId" = $1`,
       renamedId,
@@ -908,7 +913,7 @@ describe('ACM1R-FB-18 — the common advisory lock covers first creation', () =>
 
     // After the lock is released the same command completes normally.
     expect((await runBootstrap(root.email)).exitCode).toBe(0);
-    expect(await countOf('Permissions')).toBe(3);
+    expect(await countOf('Permissions')).toBe(CANONICAL_COUNT);
   });
 });
 
@@ -916,7 +921,7 @@ describe('ACM1R-FB-19 — revalidation before writes and again before commit', (
   it('rolls back when the root is deactivated inside the transaction window', async () => {
     // Break caught: without the pre-commit check, everything between the first
     // eligibility read and commit is a window in which the root identity can
-    // change underneath a transaction that is about to grant it three
+    // change underneath a transaction that is about to grant it the canonical
     // permissions.
     //
     // Deterministic without any production test hook. We take the root row
@@ -987,7 +992,7 @@ describe('ACM1R-FB-20..22 — with no singleton, adoption is permitted', () => {
     expect(await countOf('Policies')).toBe(1);
     expect(await frPolicyId()).toBe(existingPolicyId);
     expect((await bootstrapSingleton()).policyId).toBe(existingPolicyId);
-    expect(await countOf('PolicyPermissions')).toBe(3);
+    expect(await countOf('PolicyPermissions')).toBe(CANONICAL_COUNT);
     const attachments = await sql<{ policyId: string }>(
       `SELECT "policyId" FROM "UserPolicies"`,
     );
@@ -1139,8 +1144,8 @@ describe('ACM1R-FB-23 — with the singleton present, a changed root email is co
       rita.id,
     );
     expect(ritaAttachments).toEqual([]);
-    expect(await countOf('Permissions')).toBe(3);
-    expect(await countOf('PolicyPermissions')).toBe(3);
+    expect(await countOf('Permissions')).toBe(CANONICAL_COUNT);
+    expect(await countOf('PolicyPermissions')).toBe(CANONICAL_COUNT);
   });
 });
 
@@ -1211,9 +1216,9 @@ describe('ACM1R-FB-25 — concurrent runs', () => {
 
     expect(first.exitCode).toBe(0);
     expect(second.exitCode).toBe(0);
-    expect(await countOf('Permissions')).toBe(3);
+    expect(await countOf('Permissions')).toBe(CANONICAL_COUNT);
     expect(await countOf('Policies')).toBe(1);
-    expect(await countOf('PolicyPermissions')).toBe(3);
+    expect(await countOf('PolicyPermissions')).toBe(CANONICAL_COUNT);
     expect(await countOf('UserPolicies')).toBe(1);
     expect(await countOf('AccessControlBootstrap')).toBe(1);
   });
@@ -1235,9 +1240,9 @@ describe('ACM1R-FB-25 — concurrent runs', () => {
     const loser = first.exitCode === 0 ? second : first;
     expect(loser.output).toMatch(/drift|conflicting/i);
 
-    expect(await countOf('Permissions')).toBe(3);
+    expect(await countOf('Permissions')).toBe(CANONICAL_COUNT);
     expect(await countOf('Policies')).toBe(1);
-    expect(await countOf('PolicyPermissions')).toBe(3);
+    expect(await countOf('PolicyPermissions')).toBe(CANONICAL_COUNT);
     expect(await countOf('UserPolicies')).toBe(1);
     expect(await countOf('AccessControlBootstrap')).toBe(1);
 
@@ -1260,11 +1265,11 @@ describe('ACM1R-FB-26 — drift is dispositioned per field', () => {
       policyId,
       permissionId,
     );
-    expect(await countOf('PolicyPermissions')).toBe(2);
+    expect(await countOf('PolicyPermissions')).toBe(CANONICAL_COUNT - 1);
 
     expect((await runBootstrap(root.email)).exitCode).toBe(0);
 
-    expect(await countOf('PolicyPermissions')).toBe(3);
+    expect(await countOf('PolicyPermissions')).toBe(CANONICAL_COUNT);
   });
 
   it('R2: restores a deleted root attachment for the RECORDED root', async () => {
@@ -1457,8 +1462,8 @@ describe('ACM1R-FB-27 — a failure after writes leaves no partial state', () =>
 
     // The rollback left no poisoned state: a clean run still succeeds.
     expect((await runBootstrap(root.email)).exitCode).toBe(0);
-    expect(await countOf('Permissions')).toBe(3);
-    expect(await countOf('PolicyPermissions')).toBe(3);
+    expect(await countOf('Permissions')).toBe(CANONICAL_COUNT);
+    expect(await countOf('PolicyPermissions')).toBe(CANONICAL_COUNT);
     expect(await countOf('UserPolicies')).toBe(1);
   });
 });
@@ -1466,8 +1471,8 @@ describe('ACM1R-FB-27 — a failure after writes leaves no partial state', () =>
 describe('ACM1R-FB-28 — administrator additions survive a rerun', () => {
   it('preserves an approved fourth permission, its grant, and a later attachment', async () => {
     // Break caught: verifying the policy's grants by comparing its FULL grant
-    // set against the canonical three would delete the fourth. The correct
-    // check is that the three canonical pairs are PRESENT, not that they are
+    // set against the canonical set would delete an administrator's extra. The
+    // correct check is that the canonical pairs are PRESENT, not that they are
     // the only ones.
     const root = await seedRoot();
     expect((await runBootstrap(root.email)).exitCode).toBe(0);
@@ -1496,13 +1501,14 @@ describe('ACM1R-FB-28 — administrator additions survive a rerun', () => {
 
     expect((await runBootstrap(root.email)).exitCode).toBe(0);
 
-    expect(await countOf('Permissions')).toBe(4);
+    // canonical set + the one administrator-approved extra permission
+    expect(await countOf('Permissions')).toBe(CANONICAL_COUNT + 1);
     const [fourth] = await sql<{ id: string }>(
       `SELECT id FROM "Permissions" WHERE key = $1`,
       fourthKey,
     );
     expect(fourth.id).toBe(fourthId);
-    expect(await countOf('PolicyPermissions')).toBe(4);
+    expect(await countOf('PolicyPermissions')).toBe(CANONICAL_COUNT + 1);
     expect(await countOf('UserPolicies')).toBe(2);
     const attachments = await sql<{ userId: string }>(
       `SELECT "userId" FROM "UserPolicies" ORDER BY "userId"`,

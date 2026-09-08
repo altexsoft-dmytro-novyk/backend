@@ -25,8 +25,10 @@ import {
  *   - **Authenticated active viewer, empty audience → `403`.** On this read
  *     route `colleague` is the floor, so an empty audience means the target is
  *     not an active `User`. No existence distinction — a forbidden target and a
- *     missing target both return `403`, from `AccessControlGuard`'s denied
- *     `isAllowedForTarget`.
+ *     missing target both return `403`, from `SectionAccessGuard`'s denied
+ *     `hasSectionAccess('profile:identity', 'read')` (PLAT-E4-S4.1c moved this
+ *     route onto `@RequireSectionAccess`; before that the `403` came from
+ *     `AccessControlGuard`).
  *
  * AD-3: real `AppModule`, real Prisma / migrated PostgreSQL, no provider
  * overrides.

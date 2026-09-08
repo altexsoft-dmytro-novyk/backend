@@ -86,7 +86,7 @@ describe("Epic 4 · Story 4.1 — Change an Employee's Manager (e2e, committed r
       .delete(`/users/${employeeId}/relationships/${relationshipId}`)
       .set('authorization', bearer(viewerId));
   // "access resolves through the new manager next request" — asserted as a
-  // successful S1 read by the manager (a `direct` edge
+  // successful profile:identity read by the manager (a `direct` edge
   // `{ userId: report, reportsToUserId: manager }` makes `manager` resolve
   // `reporting` over `report`).
   const readAs = (targetId: string, viewerId: string) =>
@@ -211,10 +211,10 @@ describe("Epic 4 · Story 4.1 — Change an Employee's Manager (e2e, committed r
     // Next request: Bob no longer resolves `reporting` over Alice. The original
     // draft asserted `403` here, but that contradicts the platform-wide
     // `colleague` floor (UMAC-04, `read-adoption.e2e-spec.ts`): two confirmed
-    // active users always resolve at least `colleague`, and S1 is `R` for the
+    // active users always resolve at least `colleague`, and profile:identity is `R` for the
     // Colleague column, so `GET /users/:id` stays `200`. The real access
     // consequence of the revoke is that Bob drops from Reporting-line **writer**
-    // to colleague — `canAccessSection('S1')` goes `write` → `read` — so
+    // to colleague — `canAccessSection('profile:identity')` goes `write` → `read` — so
     // `canEdit` flips to `false`. (Minimal Stage-3 fix — the `403` line was
     // unsatisfiable given the resolver's colleague floor.)
     const asBob = await readAs(alice.id, bob.id);

@@ -66,6 +66,14 @@ model User {
   departures         Departure[] @relation("DepartureSubject")
   recordedDepartures Departure[] @relation("DepartureCreatedBy")
 
+  // Epic 4 Story 4.2 (increment 4.2c) — the §2.4 full-profile-access overlay.
+  // Back-relations only: Prisma requires them for the three foreign keys; no
+  // consumer reads them off the User row (holder status is queried by
+  // `holderUserId`, via `PrismaFullProfileAccessAdapter`).
+  fullProfileGrantsAsHolder    FullProfileGrant[] @relation("FullProfileGrantHolder")
+  fullProfileGrantsAsGrantor   FullProfileGrant[] @relation("FullProfileGrantGrantedBy")
+  fullProfileGrantsAsRevoker   FullProfileGrant[] @relation("FullProfileGrantRevokedBy")
+
   @@map("users")
 }
 
@@ -117,6 +125,47 @@ model AccessJournal {
 
   @@index([subjectUserId, occurredAt])
   @@map("access_journal")
+}
+
+// ---------------------------------------------------------------------------
+// Epic 4 Story 4.2 (increment PLAT-E4-S4.2c) — the §2.4 full-profile-access
+// overlay (PM/AD-28, access-control.md §"Full-profile access overlay"). A
+// holder fact with its own grantedBy actor and its own lifecycle (grant/
+// revoke, journaled, singleton-floor protected) — deliberately NOT a
+// `Policy`/`UserPolicy` row (`Policies_type_check` restricts `type` to
+// 'FR'/'AR'; `ACM1-FB-06` pins exactly one `Policies` row after bootstrap).
+// Also NOT a matrix column (access-control.md:345, "Overlay is not a matrix
+// column"): consulted only inside `AccessControlFacade.resolveSectionAccess`,
+// never inside `AudienceResolverService` or the `Audience` union.
+//
+// `grantedByUserId` is nullable ONLY for the one bootstrap-seeded row (root
+// granting itself the first holder slot) — every ordinary grant sets it to
+// the acting holder. This mirrors `User.createdBy`'s self-reference for root
+// at seed time (`prisma/seed.ts:149`: "it can be reused as its own createdBy
+// in the same insert") rather than inventing a new "system actor" convention.
+// Prisma cannot express a partial unique index or a CHECK constraint; both are
+// raw SQL in the migration, following the established
+// `relationships_one_direct_per_user` / `relationships_no_self_endpoint_check`
+// idiom (`20260830010000_access_control_relationships/migration.sql`).
+// ---------------------------------------------------------------------------
+model FullProfileGrant {
+  id              String    @id @default(uuid(7))
+  holderUserId    String
+  grantedByUserId String?
+  grantedAt       DateTime  @default(now()) @db.Timestamptz
+  revokedByUserId String?
+  revokedAt       DateTime? @db.Timestamptz
+
+  holder    User  @relation("FullProfileGrantHolder", fields: [holderUserId], references: [id], onDelete: Restrict)
+  grantedBy User? @relation("FullProfileGrantGrantedBy", fields: [grantedByUserId], references: [id], onDelete: Restrict)
+  revokedBy User? @relation("FullProfileGrantRevokedBy", fields: [revokedByUserId], references: [id], onDelete: Restrict)
+
+  // UNIQUE (holderUserId) WHERE revokedAt IS NULL — raw SQL in the migration,
+  // same idiom as relationships_one_direct_per_user / the department_membership
+  // and employment_status "current row" partial uniques. Lets a holder be
+  // re-granted after a prior revoke without a global unique blocking it.
+  @@index([holderUserId])
+  @@map("full_profile_grants")
 }
 
 // ---------------------------------------------------------------------------
@@ -300,8 +349,14 @@ model Relationship {
   reportsTo User?    @relation("RelationshipReportsTo", fields: [reportsToUserId], references: [id], onDelete: Restrict)
   project   Project? @relation(fields: [projectId], references: [id], onDelete: Restrict)
 
+  // The reporting walk's hot path: the recursive CTE both seeds and recurses on
+  // the subject (`userId`) filtered by `type = 'direct'`, in that column order.
+  // Corrected 2026-09-05: this annotation used to sit on the index below, from
+  // when the walk descended from the viewer — it ascends from the targets since
+  // `f36d1b2` (2026-08-30).
   @@index([userId, type])
-  // The resolver's hot path filters type + endpoint, in that column order.
+  // Serves the People Partner lookup only, which filters `type` plus the
+  // assigned endpoint (`reportsToUserId`).
   @@index([reportsToUserId, type])
   @@index([projectId])
   @@map("relationships")

@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { AccessControlFacade } from '../../access-control/application/access-control.facade';
-import type { AccessControlPort } from '../domain/interfaces/access-control.port';
+import { PROFILE_IDENTITY_SECTION } from '../domain/constants/section-keys';
+import type {
+  AccessControlPort,
+  SectionAccessLevel,
+  SectionAccessRequirement,
+} from '../domain/interfaces/access-control.port';
 import type { IdentityCardAccessPort } from '../domain/interfaces/identity-card-access.port';
 
 // The real production binding for `ACCESS_CONTROL_PORT` (AD-21 cutover — this
@@ -9,24 +14,20 @@ import type { IdentityCardAccessPort } from '../domain/interfaces/identity-card-
 // consumes `AccessControlFacade` across the AD-2 boundary (the facade is the
 // public surface exported by the `@Global` AccessControlModule); it is wired by
 // token in `user-management.module.ts` and injected only by
-// `AccessControlGuard` / `IdentityCardAccessService`.
+// `AccessControlGuard` / `SectionAccessGuard` / `IdentityCardAccessService`.
 //
 // It also implements `IdentityCardAccessPort` so the `canEdit` hint on
 // `GET /users/:id` has a single facade-consuming home rather than a second
 // adapter.
 
-// The target-scoped read route maps to Phase-0 audience resolution: any
-// non-empty audience (`self` / `reporting` / `pp` / `colleague`) over an active
-// target is entitled to the S1 identity card (§3.2). An empty audience — which
-// on this route means the target is not an active `User` — denies (guard → 403).
-const READ_USER_FEATURE = 'user-management:read';
-// The `PATCH /users/:id` gate (and the `canEdit` hint). Variant A base gate is
-// `canAccessSection('S1') === 'write'` (reporting-line manager or assigned
-// People Partner); holding this key as a live FR grant is an OR override on top
-// — see `canEditS1`.
-const EDIT_USER_FEATURE = 'user-management:edit';
-// The identity-card section string the kernel supports for S1 (ACM-5).
-const S1_SECTION = 'S1';
+// Level satisfaction is by rank, not equality: a resolved level satisfies a
+// requirement when it sits at or above it, so `write` satisfies a `'read'`
+// requirement and `none` satisfies neither (story 4.1 "Guard semantics").
+const SECTION_ACCESS_RANK: Record<SectionAccessLevel, number> = {
+  none: 0,
+  read: 1,
+  write: 2,
+};
 
 @Injectable()
 export class AccessControlFacadeAdapter
@@ -41,70 +42,62 @@ export class AccessControlFacadeAdapter
     return this.facade.isAllowed(userId, feature);
   }
 
-  async isAllowedForTarget(
+  // The one section-parameterised authorisation question (SCP 2026-09-04 D3),
+  // asked by `SectionAccessGuard` for every `@RequireSectionAccess` route and
+  // by `canEditIdentityCard` for the `canEdit` hint.
+  //
+  // AUDIENCE-FIRST, and the ordering is the invariant rather than a style
+  // choice (`docs/architecture/access-control.md:19`, NORMATIVE — "a new
+  // functional role never widens data access ... feature permissions operate
+  // *within* the holder's resolved audiences only"). `canAccessSection`
+  // resolves first and returns `false` on its own; `isAllowed` is reached only
+  // after the audience half has already allowed, so the functional half can
+  // only ever subtract. An unmapped section resolves `'none'` here and denies
+  // — fail-closed, no throw, no log-and-allow.
+  //
+  // The feature half of the D1 dual gate is `'<section>:write'`, and it is
+  // consulted ONLY for a `'write'` requirement: §3.2 decides reads by audience
+  // alone and `DEFAULT_PERMISSIONS` holds no `:read` key, so deriving
+  // `'<section>:<level>'` uniformly would ask for a key nobody holds and deny
+  // every read.
+  async hasSectionAccess(
     userId: string,
-    feature: string,
+    section: string,
+    level: SectionAccessRequirement,
     targetUserId: string,
   ): Promise<boolean> {
-    if (feature === READ_USER_FEATURE) {
-      const audiences = await this.facade.resolveAudiences(userId, [
-        targetUserId,
-      ]);
-      const set = audiences.get(targetUserId);
-      return set !== undefined && set.size > 0;
+    const resolved = await this.facade.canAccessSection(
+      userId,
+      section,
+      targetUserId,
+    );
+    // Fail closed on an unrecognised level: a bare lookup would yield
+    // `undefined`, and `undefined < n` is `false`, so the deny below would be
+    // skipped and the gate would PASS. Type-unreachable today; one `??` is
+    // cheaper than relying on that staying true.
+    if (
+      (SECTION_ACCESS_RANK[resolved] ?? -1) <
+      (SECTION_ACCESS_RANK[level] ?? Number.POSITIVE_INFINITY)
+    ) {
+      return false;
     }
-
-    if (feature === EDIT_USER_FEATURE) {
-      return this.canEditS1(userId, targetUserId);
+    if (level === 'read') {
+      return true;
     }
-
-    // PUT /users/:id/photo is Self-only and gated by SelfOnlyGuard, not here.
-    // Any other write-path target feature is fail-closed until wired.
-    return false;
+    return this.facade.isAllowed(userId, `${section}:write`);
   }
 
-  // The `canEdit` hint on `GET /users/:id`, and the gate on `PATCH /users/:id`.
+  // The `canEdit` hint on `GET /users/:id`. Literally the same call the
+  // `PATCH /users/:id` gate makes, so the hint and the gate cannot disagree.
   async canEditIdentityCard(
     viewerId: string,
     targetUserId: string,
   ): Promise<boolean> {
-    return this.canEditS1(viewerId, targetUserId);
-  }
-
-  // The identity-card (S1) edit decision, shared by the `PATCH /users/:id` gate
-  // and the read-only `canEdit` hint.
-  //
-  // Base gate (product decision 2026-09-02, "Variant A"): audience write-access
-  // — the manager on this person's reporting line, or their assigned People
-  // Partner. That is `canAccessSection('S1') === 'write'`.
-  //
-  // OR override: a live `user-management:edit` functional permission widens the
-  // base gate (e.g. the seeded root HR Admin, via `scripts/dev-grant-root.ts`).
-  // It only ever WIDENS — it never opens an edit that section access itself
-  // denies: a `'none'` result here (a deactivated or unknown target) stays
-  // closed for every viewer, grant or not. So a holder may edit any *active*
-  // card, their own included, without a reporting-line or People-Partner edge.
-  //
-  // NOTE: the composition here (OR) is provisional — see the access-control
-  // deferred-work entry "Generalise section-access authorisation" for the
-  // planned rewrite (one section-parameterised gate; §2.2 dual-gate vs Variant A
-  // decided centrally).
-  private async canEditS1(
-    viewerId: string,
-    targetUserId: string,
-  ): Promise<boolean> {
-    const sectionAccess = await this.facade.canAccessSection(
+    return this.hasSectionAccess(
       viewerId,
-      S1_SECTION,
+      PROFILE_IDENTITY_SECTION,
+      'write',
       targetUserId,
     );
-    if (sectionAccess === 'write') {
-      return true;
-    }
-    if (sectionAccess === 'none') {
-      // Deactivated / unknown target — never editable, override or not.
-      return false;
-    }
-    return this.facade.isAllowed(viewerId, EDIT_USER_FEATURE);
   }
 }

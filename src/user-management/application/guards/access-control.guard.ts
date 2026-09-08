@@ -18,8 +18,8 @@ import {
 import type { RequestWithSession } from './session.guard';
 
 // Runs after SessionGuard — reads the session it attached to the request.
-// A handler with no @RequireFeature[ForTarget] metadata is allowed through
-// unchecked (session-only routes, if any are ever added).
+// A handler with no @RequireFeature metadata is allowed through unchecked
+// (session-only routes, if any are ever added).
 @Injectable()
 export class AccessControlGuard implements CanActivate {
   private readonly logger = new Logger(AccessControlGuard.name);
@@ -40,21 +40,14 @@ export class AccessControlGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<RequestWithSession>();
-    const isAllowed = meta.targetScoped
-      ? await this.accessControl.isAllowedForTarget(
-          request.session.userId,
-          meta.feature,
-          request.params.id as string,
-        )
-      : await this.accessControl.isAllowed(
-          request.session.userId,
-          meta.feature,
-        );
+    const isAllowed = await this.accessControl.isAllowed(
+      request.session.userId,
+      meta.feature,
+    );
 
     if (!isAllowed) {
       this.logger.warn(
-        `access denied: user ${request.session.userId} lacks "${meta.feature}"` +
-          `${meta.targetScoped ? ` on target ${request.params.id as string}` : ''} → 403`,
+        `access denied: user ${request.session.userId} lacks "${meta.feature}" → 403`,
       );
       throw new ForbiddenException();
     }

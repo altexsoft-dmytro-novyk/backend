@@ -5,13 +5,20 @@
 // db:deploy -> db:seed -> db:bootstrap:access-control -> start:prod.
 //
 // Ownership is a SET OF SPECIFIC ROWS, not the contents of these tables: the
-// three canonical permission keys, the FR `hr-admin` policy, their three
+// six canonical permission keys, the FR `hr-admin` policy, their six
 // canonical grant pairs, the normalized root attachment, and the
 // `AccessControlBootstrap` singleton. Everything else in the same tables
 // belongs to administrators under a later approved catalog contract and is
 // preserved. A rerun that pruned back to the canonical set would revoke
 // approved access on every deployment.
+//
+// PLAT-E4-S4.2c adds a SEVENTH owned row class: the one bootstrap-seeded
+// `FullProfileGrant` (§2.4 full-profile-access overlay, root as first
+// holder), plus its paired `AccessJournal` row. Same transaction, same
+// advisory lock, same "singleton absent -> create; singleton present ->
+// verify-or-no-op" shape as the FR-policy logic already here.
 import { PrismaPg } from '@prisma/adapter-pg';
+import { createHash } from 'node:crypto';
 import { uuidv7 } from 'uuidv7';
 import { PrismaClient } from '../../../generated/prisma/client';
 
@@ -31,6 +38,41 @@ export const CANONICAL_PERMISSIONS = [
   {
     key: 'user-management:list',
     description: 'List users in User Management.',
+  },
+  // PLAT-E4-S4.2a — the operator half of the root-operator set. Both keys are
+  // FEATURE keys with live gates: `org:relationships:write` is read by
+  // `relationships.controller.ts`, `departments.controller.ts` and
+  // `org-relationships-read-access-facade.adapter.ts`;
+  // `employee:departure:record` by `departures.controller.ts`. Neither appears
+  // in `SECTION_ACCESS_MATRIX` or `DEFAULT_PERMISSIONS`, so neither can reach a
+  // section decision.
+  {
+    key: 'org:relationships:write',
+    description: 'Write organisational relationships and department edges.',
+  },
+  {
+    key: 'employee:departure:record',
+    description: 'Record and remediate an employee departure.',
+  },
+  // PLAT-E4-S4.2a / PO ruling AF-2 (Dmytro Novyk, 2026-09-06) — a KNOWN,
+  // ACCEPTED DEVIATION, seeded deliberately against this spec's own
+  // recommendation. This is the one canonical key that WRITES a person's
+  // profile section, and its gate (`canEditTimeline`,
+  // `career-timeline-access-facade.adapter.ts` — `void targetUserId`, then
+  // `isAllowed` alone) has no audience half. Granting it here therefore gives
+  // every present and future holder of `hr-admin` org-wide write access to
+  // every employee's career timeline with no relationship to the target, which
+  // `docs/architecture/access-control.md:19` marks NORMATIVE against. The
+  // trade-off the ruling accepts: excluding it leaves the manual
+  // timeline-write route closed to everyone on a clean production install.
+  // Do NOT narrow this grant or add an audience check to the timeline gate as a
+  // drive-by; the deviation closes when `canEditTimeline` gains its audience
+  // half (the deferred DEC-UM-001 narrowing). Asserted on purpose by
+  // `docs/test-cases/user-management/access-control-adoption/
+  // s42a-op-06-delegated-hr-admin-timeline-write-accepted-deviation.md`.
+  {
+    key: 'profile:timeline:write',
+    description: 'Add or soft-delete career-timeline events.',
   },
 ] as const;
 
@@ -228,7 +270,7 @@ async function ensurePermissions(tx: Tx): Promise<string[]> {
   return ids;
 }
 
-/** Ensures the three canonical pairs are PRESENT — not that they are the only ones. */
+/** Ensures the six canonical pairs are PRESENT — not that they are the only ones. */
 async function ensureGrants(
   tx: Tx,
   policyId: string,
@@ -256,6 +298,103 @@ async function attachmentExists(
     policyId,
   );
   return rows.length > 0;
+}
+
+// ---------------------------------------------------------------------------
+// PLAT-E4-S4.2c — §2.4 full-profile-access overlay: seed root as the FIRST
+// holder. Same derivation as `access-journal-idempotency.ts`'s
+// `accessJournalIdempotencyKey` (user-management infrastructure), computed
+// locally rather than importing across the bounded-context boundary for this
+// one deploy-time script's own single write.
+// ---------------------------------------------------------------------------
+function journalIdempotencyKey(
+  actorUserId: string,
+  subjectUserId: string,
+  kind: string,
+  relationshipId: string,
+  operation: string,
+): string {
+  return createHash('sha256')
+    .update(
+      [actorUserId, subjectUserId, kind, relationshipId, operation].join('|'),
+    )
+    .digest('hex');
+}
+
+/**
+ * "Zero rows anywhere," NOT "no row for root specifically" (spec Always/
+ * Never lists).
+ *
+ * CORRECTED 2026-09-07 (John, PM, code-review finding): the original
+ * implementation locked every existing row with `FOR UPDATE` to guard
+ * against a concurrent first run racing past this check. That guard is
+ * redundant — `acquireBootstrapLock` (above) is taken BEFORE this read, for
+ * the whole bootstrap transaction, on every bootstrap run; no concurrent
+ * transaction can be inside this function at the same time regardless of any
+ * lock taken here. A row lock therefore added real overhead (locking every
+ * row in the table, unbounded as the holder set grows) for zero additional
+ * correctness. `LIMIT 1` turns this into a genuine existence probe instead of
+ * a full-table read. (The `FOR UPDATE`-refuses-aggregates note is retained
+ * only as a record of why a plain `SELECT count(*)` was never on the table:
+ * Postgres refuses `FOR UPDATE` combined with an aggregate function,
+ * independently verified against a live Postgres 18 — moot now that no lock
+ * is taken here at all.)
+ */
+async function fullProfileGrantsExistAnywhere(tx: Tx): Promise<boolean> {
+  const rows = await tx.$queryRawUnsafe<{ id: string }[]>(
+    `SELECT "id" FROM "full_profile_grants" LIMIT 1`,
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Singleton-absent branch only — the singleton-present branch is "verify or
+ * no-op," and there is nothing to verify against a per-holder identity here
+ * (Always: the condition is "zero rows anywhere," not "root's own row"), so a
+ * later administrator's grant to a second holder is left completely alone by
+ * every rerun.
+ *
+ * `grantedByUserId` stays NULL — the one sanctioned exception the CHECK
+ * constraint allows (root granting itself the first holder slot, mirroring
+ * `User.createdBy`'s self-reference for root, `prisma/seed.ts:149`). The
+ * paired `AccessJournal` row self-references root as BOTH actor and subject:
+ * `AccessJournal.actorUserId` is `NOT NULL` (`schema.prisma:101`), so it
+ * cannot be left empty the way `grantedByUserId` can.
+ */
+async function seedFullProfileGrantIfNone(
+  tx: Tx,
+  root: RootCandidate,
+): Promise<void> {
+  if (await fullProfileGrantsExistAnywhere(tx)) {
+    return;
+  }
+
+  const grantId = uuidv7();
+  await tx.$executeRawUnsafe(
+    `INSERT INTO "full_profile_grants"
+       ("id", "holderUserId", "grantedByUserId", "grantedAt", "revokedByUserId", "revokedAt")
+     VALUES ($1, $2, NULL, CURRENT_TIMESTAMP, NULL, NULL)`,
+    grantId,
+    root.id,
+  );
+
+  const after = { grantId, holderUserId: root.id, grantedByUserId: null };
+  await tx.$executeRawUnsafe(
+    `INSERT INTO "access_journal"
+       ("id", "actorUserId", "subjectUserId", "kind", "before", "after", "idempotencyKey")
+     VALUES ($1, $2, $3, 'full_profile_grant', NULL, $4::jsonb, $5)`,
+    uuidv7(),
+    root.id,
+    root.id,
+    JSON.stringify(after),
+    journalIdempotencyKey(
+      root.id,
+      root.id,
+      'full_profile_grant',
+      grantId,
+      'create',
+    ),
+  );
 }
 
 export async function bootstrapAccessControl(
@@ -367,9 +506,16 @@ export async function bootstrapAccessControl(
         );
       }
 
+      // PLAT-E4-S4.2c — §2.4 full-profile-access overlay: seed root as the
+      // first holder. Independent table, independent lock-within-the-lock
+      // from the FR-policy logic above; order relative to it is not
+      // load-bearing (spec Code Map), placed here so it still runs before the
+      // pre-commit revalidation below.
+      await seedFullProfileGrantIfNone(tx, root);
+
       // Revalidate before commit. Everything between the first check and commit
       // is a window in which the root identity can change underneath a
-      // transaction that is about to grant it three permissions.
+      // transaction that is about to grant it six permissions.
       const stillEligible = await tx.user.findUnique({
         where: { id: root.id },
         select: { workEmail: true, isActive: true },

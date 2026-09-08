@@ -48,9 +48,24 @@ class FacadeBackedAccessControlAdapter implements AccessControlPort {
     return Promise.resolve(false);
   }
 
-  async isAllowedForTarget(
+  // PLAT-E4-S4.1c moved `GET /users/:id` from `@RequireFeatureForTarget` onto
+  // `@RequireSectionAccess('profile:identity', 'read')`, so the HTTP allow path
+  // for ACF-AU-01..04 enters through this method. (PLAT-E4-S4.1d then removed
+  // `isAllowedForTarget` from `AccessControlPort` and dropped this fake's
+  // now-unreachable implementation of it.) The test-only mapping is
+  // `hasAllowedAudience` below — self/reporting/pp allow, colleague denies — so
+  // the suite's oracle is unchanged.
+  async hasSectionAccess(
     userId: string,
-    _feature: string,
+    _section: string,
+    _level: 'read' | 'write',
+    targetUserId: string,
+  ): Promise<boolean> {
+    return this.hasAllowedAudience(userId, targetUserId);
+  }
+
+  private async hasAllowedAudience(
+    userId: string,
     targetUserId: string,
   ): Promise<boolean> {
     const audiences = await this.facade.resolveAudiences(userId, [

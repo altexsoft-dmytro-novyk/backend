@@ -11,27 +11,32 @@ import { RunFixtures, bearer, bootstrapTestApp } from './fixtures';
  *     umac-08-write-rejects-org-fields.md
  *     umac-09-photo-write-self-only.md
  *
- * VARIANT A (product decision 2026-09-02, Dmytro Novyk). The employee identity
- * card (S1) has **no separate functional permission**. The whole gate on
- * `PATCH /users/:id` is `canAccessSection(viewer, 'S1', target) === 'write'` —
- * i.e. the target's reporting-line manager or assigned People Partner may edit;
- * self / colleague may not. §2.2's functional-permission half is NOT applied to
- * this section. The string `user-management:edit` survives only as the adapter's
- * internal routing key for the PATCH-gate branch. There is NO dependency on a
- * `user-management:edit` kernel seed.
+ * THE LIVE GATE (SCP 2026-09-04 D1, landed by PLAT-E4-S4.1c).
+ * `PATCH /users/:id` carries `@RequireSectionAccess('profile:identity',
+ * 'write')`, enforced by `SectionAccessGuard` through
+ * `AccessControlPort.hasSectionAccess`. It is a dual gate, AUDIENCE-FIRST:
+ * `canAccessSection(viewer, 'profile:identity', target) === 'write'` decides
+ * first — the target's reporting-line manager or assigned People Partner may
+ * edit; self / colleague may not — and only then is the functional half
+ * `isAllowed(viewer, 'profile:identity:write')` consulted, so a functional
+ * permission can never widen a resolved audience
+ * (`docs/architecture/access-control.md:19`, NORMATIVE). That functional key is
+ * held implicitly by every active employee through `DEFAULT_PERMISSIONS`
+ * (PLAT-E4-S4.1a), so there is NO dependency on a kernel seed for it.
  *
- * UPDATE 2026-09-03: `access-control-facade.adapter.ts` `canEditS1` now ALSO
- * honours a live `user-management:edit` FR grant as an OR-override on the base
- * section gate (what `scripts/dev-grant-root.ts` relies on). It only widens — a
- * `'none'` section result (deactivated / unknown target) stays closed. Covered
- * by the "OR-override" describe block below; a full rewrite of the per-section
- * predicates is tracked in the access-control deferred-work.
+ * HISTORY, because this file predates the gate. It was authored under
+ * "Variant A" (product decision 2026-09-02, Dmytro Novyk), where the gate was
+ * the audience half alone and `user-management:edit` was only the adapter's
+ * internal routing key; a 2026-09-03 change then added that key as an
+ * OR-override inside `canEditS1`. 4.1c moved the route onto the dual gate and
+ * retired the override's pinning tests (see the note above UMAC-08), and 4.1d
+ * deleted the last of that machinery. Every assertion below is unchanged
+ * throughout — the observable contract never moved.
  *
  * STATE (per group):
- *   - UMAC-07 — GREEN. `access-control-facade.adapter.ts` `isAllowedForTarget`'s
- *     `EDIT_USER_FEATURE` branch returns `canAccessSection('S1') === 'write'`, so
- *     a reporting-line manager / assigned PP `PATCH` succeeds, and a
- *     colleague / self / unresolved `PATCH` is `403`.
+ *   - UMAC-07 — GREEN under the dual gate: a reporting-line manager / assigned
+ *     PP `PATCH` succeeds, and a colleague / self / unresolved `PATCH` is
+ *     `403`.
  *   - UMAC-08 — RED until Epic 1 Story 1.2 Stage 3. `UpdateUserDto` does not
  *     declare `manager` / `peoplePartner` / `department`, so `ValidationPipe`
  *     `whitelist: true` SILENTLY STRIPS them and the request `200`s on the
@@ -88,18 +93,18 @@ describe('UMAC-2 Stage 2 — PATCH / PUT photo write-path gates (e2e)', () => {
 
   // docs/test-cases/user-management/access-control-adoption/umac-07-write-dual-gate.md
   //
-  // VARIANT A: identity-card edit is gated by S1 write-access alone —
-  // `canAccessSection(V, 'S1', T) === 'write'` (reporting-line manager or
+  // VARIANT A: identity-card edit is gated by profile:identity write-access alone —
+  // `canAccessSection(V, 'profile:identity', T) === 'write'` (reporting-line manager or
   // assigned People Partner). No functional-permission half; no
   // `user-management:edit` seed. GREEN.
-  describe('UMAC-07 · PATCH /users/:id identity-card edit is gated by S1 write-access (Variant A)', () => {
-    it('UMAC-07 Test 3 — colleague (no reporting/PP edge) PATCH S1 → 403 [canAccessSection = "read"]', async () => {
+  describe('UMAC-07 · PATCH /users/:id identity-card edit is gated by profile:identity write-access (Variant A)', () => {
+    it('UMAC-07 Test 3 — colleague (no reporting/PP edge) PATCH profile:identity → 403 [canAccessSection = "read"]', async () => {
       const viewer = await fx.user('umac07-colleague', {
         firstName: 'Colleague',
       });
       const target = await fx.user('umac07-target-c', { position: 'Engineer' });
       // No Relationship edge either direction → V is only `colleague` over T →
-      // canAccessSection(V, 'S1', T) === 'read', not 'write' → the edit gate denies.
+      // canAccessSection(V, 'profile:identity', T) === 'read', not 'write' → the edit gate denies.
 
       const res = await patch(target.id, viewer.id, {
         position: 'Principal Engineer',
@@ -110,10 +115,10 @@ describe('UMAC-2 Stage 2 — PATCH / PUT photo write-path gates (e2e)', () => {
       expect(readBack.body).toMatchObject({ data: { position: 'Engineer' } });
     });
 
-    it('UMAC-07 Test 4 — Self PATCH of a non-photo S1 field → 403 [S1 is "read" for self; only the photo is Self-writable]', async () => {
+    it('UMAC-07 Test 4 — Self PATCH of a non-photo profile:identity field → 403 [profile:identity is "read" for self; only the photo is Self-writable]', async () => {
       const self = await fx.user('umac07-self', { position: 'Engineer' });
-      // §3.2: the S1 identity card is `R` for Self; a reporting-line / PP audience
-      // is required to WRITE S1. Self writes only the photo (umac-09).
+      // §3.2: the profile:identity card is `R` for Self; a reporting-line / PP audience
+      // is required to WRITE profile:identity. Self writes only the photo (umac-09).
 
       const res = await patch(self.id, self.id, { position: 'Staff Engineer' });
       expect(res.status).toBe(403);
@@ -136,8 +141,8 @@ describe('UMAC-2 Stage 2 — PATCH / PUT photo write-path gates (e2e)', () => {
       expect(res.status).toBe(401);
     });
 
-    it('UMAC-07 Test 1 — reporting-line manager PATCHes a report’s S1 → 200, change persists', async () => {
-      // Variant A: the reporting edge alone gives `canAccessSection('S1') ===
+    it('UMAC-07 Test 1 — reporting-line manager PATCHes a report’s profile:identity → 200, change persists', async () => {
+      // Variant A: the reporting edge alone gives `canAccessSection('profile:identity') ===
       // 'write'`, which is the whole gate. No FR grant is seeded — the identity
       // card has no functional-permission layer.
       const manager = await fx.user('umac07-mgr', { firstName: 'Manager' });
@@ -176,8 +181,8 @@ describe('UMAC-2 Stage 2 — PATCH / PUT photo write-path gates (e2e)', () => {
       });
     });
 
-    it('UMAC-07 Test 2 — assigned People Partner PATCHes an employee’s S1 → 200, change persists', async () => {
-      // Variant A: the `people_partner` edge gives `canAccessSection('S1') ===
+    it('UMAC-07 Test 2 — assigned People Partner PATCHes an employee’s profile:identity → 200, change persists', async () => {
+      // Variant A: the `people_partner` edge gives `canAccessSection('profile:identity') ===
       // 'write'` — the assigned PP is the second entitled writer.
       const pp = await fx.user('umac07-pp', { firstName: 'PeoplePartner' });
       const employee = await fx.user('umac07-employee', {
@@ -200,69 +205,33 @@ describe('UMAC-2 Stage 2 — PATCH / PUT photo write-path gates (e2e)', () => {
     });
   });
 
-  // The `user-management:edit` FR-grant OR-override on the S1 edit gate (added
-  // 2026-09-03). This is NOT Variant A — it is the provisional widening that
-  // `scripts/dev-grant-root.ts` relies on to give a local root `canEdit` on
-  // every card. `access-control-facade.adapter.ts` `canEditS1`: a live
-  // `user-management:edit` grant passes the gate for any target section access
-  // already resolves to `read`/`write`, but NEVER for a `'none'` target
-  // (deactivated / unknown). A full rewrite of the per-section predicates is
-  // tracked in the access-control deferred-work
-  // ("Generalise section-access authorisation").
-  describe('umac-10 · S1 edit · `user-management:edit` FR grant is an OR-override on the section gate', () => {
-    it('grant holder with no reporting/PP edge PATCHes an active card → 200, persists, canEdit:true', async () => {
-      const editor = await fx.user('umac07-fr-editor', { firstName: 'Editor' });
-      const target = await fx.user('umac07-fr-target', { city: 'Krakow' });
-      // editor is only `colleague` over target → canAccessSection('S1') === 'read'.
-      await fx.grantFunctionalRole(editor.id, ['user-management:edit']);
-
-      const res = await patch(target.id, editor.id, { city: 'Berlin' });
-      expect(res.status).toBe(200);
-      expect(res.body).toMatchObject({ city: 'Berlin' });
-
-      const readBack = await getUser(target.id, editor.id);
-      expect(readBack.body).toMatchObject({
-        data: { city: 'Berlin' },
-        canEdit: true,
-      });
-    });
-
-    it('grant holder edits their OWN card (self, no edge) → 200, canEdit:true', async () => {
-      const editor = await fx.user('umac07-fr-self', { city: 'Krakow' });
-      await fx.grantFunctionalRole(editor.id, ['user-management:edit']);
-
-      const res = await patch(editor.id, editor.id, { city: 'Gdansk' });
-      expect(res.status).toBe(200);
-
-      const readBack = await getUser(editor.id, editor.id);
-      expect(readBack.body).toMatchObject({
-        data: { city: 'Gdansk' },
-        canEdit: true,
-      });
-    });
-
-    it('the override never widens past section access — grant holder PATCHing a DEACTIVATED target → 403', async () => {
-      const editor = await fx.user('umac07-fr-inact-editor', {
-        firstName: 'Editor',
-      });
-      const target = await fx.user('umac07-fr-inact-target', {
-        city: 'Krakow',
-        isActive: false,
-      });
-      await fx.grantFunctionalRole(editor.id, ['user-management:edit']);
-      // canAccessSection('S1', <inactive>) === 'none' → closed for everyone,
-      // grant or not.
-
-      const res = await patch(target.id, editor.id, { city: 'Berlin' });
-      expect(res.status).toBe(403);
-
-      const row = await testApp.prisma.user.findUnique({
-        where: { id: target.id },
-        select: { city: true },
-      });
-      expect(row?.city).toBe('Krakow');
-    });
-  });
+  // `umac-10` (the `user-management:edit` FR-grant OR-override describe block,
+  // added 2026-09-03) was RETIRED here by PLAT-E4-S4.1c.
+  //
+  // Why: 4.1c moved `PATCH /users/:id` and the `canEdit` hint off
+  // `isAllowedForTarget` → `canEditS1` onto the audience-first dual gate
+  // `@RequireSectionAccess('profile:identity', 'write')`. The OR-override is
+  // therefore no longer on any live code path, and two of the block's three
+  // assertions necessarily invert: a grant holder whose only audience is
+  // `colleague` or `self` is now `403` / `canEdit:false`, because §3.2 gives
+  // both cells `R` and `docs/architecture/access-control.md:19` (NORMATIVE)
+  // forbids a functional role from widening a resolved audience. That is D1
+  // taking effect, not a regression — the flip restores the normative rule.
+  //
+  // Its intent is superseded by
+  // `docs/test-cases/user-management/access-control-adoption/s41c-sag-04-functional-grant-never-widens-audience.md`,
+  // asserted in `s41c-section-access-gate.e2e-spec.ts` — including the block's
+  // one surviving assertion (a `'none'` target stays closed to a grant holder),
+  // carried over verbatim as `s41c-sag-04` Test 5. The scenario doc is kept and
+  // marked superseded, not deleted. Retirement decided 2026-09-05 by Dmytro
+  // Novyk (PO), Reading 1, recorded in
+  // `_bmad-output/implementation-artifacts/platform/spec-4-1c-require-section-access-gate.md`.
+  //
+  // The dead `user-management:edit` OR clause, and `canEditS1` with it, were
+  // deleted by PLAT-E4-S4.1d (PO ruling AF-2, 2026-09-06): the override had
+  // been off every live path since 4.1c, so Story 4.2 closes its scope item 1
+  // by verification rather than by deletion. 4.2 still owns
+  // `scripts/dev-grant-root.ts` and seating root in the relationship tree.
 
   // docs/test-cases/user-management/access-control-adoption/umac-08-write-rejects-org-fields.md
   //
@@ -275,9 +244,9 @@ describe('UMAC-2 Stage 2 — PATCH / PUT photo write-path gates (e2e)', () => {
   // rejection.
   describe('UMAC-08 · PATCH body with an organisational field is rejected 400 for every audience [RED until Story 1.2]', () => {
     // Seed a reporting-line manager over the target so the Variant A gate
-    // (`canAccessSection('S1') === 'write'`) passes and the request reaches the
+    // (`canAccessSection('profile:identity') === 'write'`) passes and the request reaches the
     // DTO. §3.2 fn 1: manager / People Partner / department are read-only through
-    // S1 for EVERY audience — they change only through Epic 4's
+    // profile:identity for EVERY audience — they change only through Epic 4's
     // organisational-relationship screen. The rejection lives in
     // EditUserAction / UpdateUserDto, not the guard, and must be EXPLICIT (400),
     // not a silent whitelist strip.
@@ -336,7 +305,7 @@ describe('UMAC-2 Stage 2 — PATCH / PUT photo write-path gates (e2e)', () => {
       const manager = await fx.user('umac09-mgr', { firstName: 'Manager' });
       const target = await fx.user('umac09-target-m', { photo: null });
       await fx.reportsTo(target.id, manager.id);
-      // A reporting-line manager has S1 `write` access to T's scalar identity
+      // A reporting-line manager has profile:identity `write` access to T's scalar identity
       // fields (umac-07), but photo is narrower: viewer id must equal target id.
 
       const res = await putPhoto(target.id, manager.id);

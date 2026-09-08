@@ -1,12 +1,14 @@
 import type { User } from '../../../generated/prisma/client';
 
-// CAP-3 — the minimal S1 identity card wrapped in the standard read envelope
-// `{ data, canEdit }`, for the `GET /users/:id` handler ONLY. The shared
+// CAP-3 — the minimal §3.2 S1 (profile:identity) identity card wrapped in the
+// standard read envelope `{ data, canEdit }`, for the `GET /users/:id` handler
+// ONLY. The shared
 // `toUserResponse` (whole-row spread) is left untouched for the other five call
 // sites (list items, POST, PATCH, DELETE, photo).
 //
-// `data` is EXACTLY these 12 S1 fields — it drops the non-S1 technical columns
-// `ttId` (AD-13 external identity), `isActive` (internal row flag, not
+// `data` is EXACTLY these 12 §3.2 S1 fields — it drops the technical columns
+// outside that row: `ttId` (AD-13 external identity), `isActive` (internal row
+// flag, not
 // exposed), `customFields` (S16), `createdAt` / `createdBy` (audit, no named
 // consumer).
 
