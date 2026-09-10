@@ -13,7 +13,7 @@ Grown from a NestJS starter into the people-management API (frontend lives in `.
 - **Docs**: Swagger at `/api/docs`; health via `@nestjs/terminus` at `/api/v1/health`
 - **Tests**: Jest — unit in `__tests__/` folders next to their source, e2e in `test/` (e2e specs for a bounded context live under `test/<context-name>/`)
 - **Contracts**: Pact provider verification against the frontend's recorded pact (`test/contract/`, own Jest project)
-- **Measurement**: P6 and ACM9 performance suites under `test/measurement/`, each with its own Jest config
+- **Measurement**: P6, ACM9, and DIRA1 performance suites under `test/measurement/`, each with its own Jest config
 
 ## Commands
 
@@ -23,7 +23,8 @@ Grown from a NestJS starter into the people-management API (frontend lives in `.
 - `npm test` / `npm run test:e2e` — unit / e2e (e2e needs Postgres: `npm run db:up`)
 - `npm run test:contract` — Pact provider verification (needs Postgres)
 - `npm run measure:access-control:p6` — P6 timings (measurement only, asserts nothing)
-- `npm run measure:access-control:acm9 -- --role baseline` — ACM9 NFR; this one can fail on a budget breach
+- `npm run measure:access-control:acm9 -- --role baseline` — ACM9 NFR (contract B); this one can fail on a budget breach
+- `npm run measure:user-management:dira1 -- --role baseline` — DIRA1 All Employees list (contract A / `PG-04`); can fail on a budget breach
 - `npm run db:up|db:down` — the whole compose stack (Postgres + LocalStack + Mailpit), not just the DB
 - `npm run db:migrate` (dev) / `db:deploy` (prod) / `db:studio` — Prisma
 - `npm run create:root` — seed plus `db:bootstrap:access-control`; the access-control entrypoint for a fresh DB
