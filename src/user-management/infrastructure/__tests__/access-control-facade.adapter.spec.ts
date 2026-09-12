@@ -1,9 +1,14 @@
-import { ExecutionContext, ForbiddenException } from '@nestjs/common';
+import {
+  ExecutionContext,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { AccessControlFacade } from '../../../access-control/application/access-control.facade';
 import { RequireSectionAccess } from '../../application/decorators/require-section-access.decorator';
 import { SectionAccessGuard } from '../../application/guards/section-access.guard';
 import type { AccessControlPort } from '../../domain/interfaces/access-control.port';
+import type { UserService } from '../../domain/services/user.service';
 import { AccessControlFacadeAdapter } from '../access-control-facade.adapter';
 
 // PLAT-E4-S4.1c — the unit surface for `hasSectionAccess`, the one question
@@ -262,9 +267,15 @@ describe('SectionAccessGuard (PLAT-E4-S4.1c)', () => {
     return handler;
   };
 
-  const buildGuard = (hasSectionAccess: jest.Mock) => {
+  const buildGuard = (
+    hasSectionAccess: jest.Mock,
+    findById: jest.Mock = jest
+      .fn()
+      .mockResolvedValue({ id: TARGET, isActive: true }),
+  ) => {
     const port = { hasSectionAccess } as unknown as AccessControlPort;
-    return new SectionAccessGuard(new Reflector(), port);
+    const users = { findById } as unknown as UserService;
+    return new SectionAccessGuard(new Reflector(), port, users);
   };
 
   const request = { session: { userId: VIEWER }, params: { id: TARGET } };
@@ -301,14 +312,37 @@ describe('SectionAccessGuard (PLAT-E4-S4.1c)', () => {
     );
   });
 
+  // umac-11 / CONFLICT-UM-01 (PM/AD-24): a hidden target is a 404 decided
+  // before the port is ever asked a section or feature question.
+  it.each([
+    ['missing', null],
+    ['inactive', { id: TARGET, isActive: false }],
+  ])(
+    'umac-11 · a %s target becomes NotFoundException before any port call',
+    async (_label, row) => {
+      const hasSectionAccess = jest.fn().mockResolvedValue(true);
+      const findById = jest.fn().mockResolvedValue(row);
+      const guard = buildGuard(hasSectionAccess, findById);
+      const handler = decorate(IDENTITY, 'write');
+
+      await expect(
+        guard.canActivate(contextFor(handler, request)),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(findById).toHaveBeenCalledWith(TARGET);
+      expect(hasSectionAccess).not.toHaveBeenCalled();
+    },
+  );
+
   it('a handler with no @RequireSectionAccess metadata passes through with no port call', async () => {
     const hasSectionAccess = jest.fn();
-    const guard = buildGuard(hasSectionAccess);
+    const findById = jest.fn();
+    const guard = buildGuard(hasSectionAccess, findById);
     const handler = () => undefined;
 
     await expect(guard.canActivate(contextFor(handler, request))).resolves.toBe(
       true,
     );
     expect(hasSectionAccess).not.toHaveBeenCalled();
+    expect(findById).not.toHaveBeenCalled();
   });
 });

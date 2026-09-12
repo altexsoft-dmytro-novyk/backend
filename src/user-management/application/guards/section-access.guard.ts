@@ -5,12 +5,14 @@ import {
   Inject,
   Injectable,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import {
   ACCESS_CONTROL_PORT,
   type AccessControlPort,
 } from '../../domain/interfaces/access-control.port';
+import { UserService } from '../../domain/services/user.service';
 import {
   REQUIRE_SECTION_ACCESS_KEY,
   type RequireSectionAccessMeta,
@@ -29,6 +31,12 @@ import type { RequestWithSession } from './session.guard';
 //
 // A handler with no `@RequireSectionAccess` metadata passes straight through,
 // untouched, with no port call — every other route keeps whatever gate it has.
+//
+// PM/AD-24 (CONFLICT-UM-01, umac-11): before any section or feature question,
+// the target must be an active `User`. A missing or inactive `:id` is a hidden
+// target → leak-free `404`, so it can never be told apart from a nonexistent one
+// and always precedes a mutation check. `403` is reserved for a visible target
+// the viewer may not read/write. `401` still comes first from `SessionGuard`.
 @Injectable()
 export class SectionAccessGuard implements CanActivate {
   private readonly logger = new Logger(SectionAccessGuard.name);
@@ -37,6 +45,7 @@ export class SectionAccessGuard implements CanActivate {
     private readonly reflector: Reflector,
     @Inject(ACCESS_CONTROL_PORT)
     private readonly accessControl: AccessControlPort,
+    private readonly userService: UserService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -50,6 +59,16 @@ export class SectionAccessGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest<RequestWithSession>();
     const targetId = request.params.id as string;
+
+    const target = await this.userService.findById(targetId);
+    if (!target || target.isActive === false) {
+      this.logger.warn(
+        `hidden target: user ${request.session.userId} requested ` +
+          `"${meta.section}" on a missing or inactive target → 404`,
+      );
+      throw new NotFoundException();
+    }
+
     const allowed = await this.accessControl.hasSectionAccess(
       request.session.userId,
       meta.section,
