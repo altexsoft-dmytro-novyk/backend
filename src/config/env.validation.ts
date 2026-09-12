@@ -105,10 +105,13 @@ export const envValidationSchema = Joi.object({
   // Non-prod escape hatch: when true, the real SessionResolver ALSO accepts the
   // `Bearer <token:<persona>>` e2e/fixture shorthand (auth/README decision 12 —
   // the retired interim adapter's capability, folded in behind a flag). Refused
-  // when NODE_ENV=production so AD-21's "one adapter" holds.
+  // when NODE_ENV=production so AD-21's "one adapter" holds: an explicit `true`
+  // there is a startup validation error, not a silently honoured override
+  // (SEC-AUTH-01 closure, 2026-09-12 — `default(false)` alone let a single
+  // misconfigured variable re-enable persona tokens and Root self-provisioning).
   ALLOW_TEST_SESSION_TOKENS: Joi.boolean().when('NODE_ENV', {
     is: 'production',
-    then: Joi.boolean().default(false),
+    then: Joi.boolean().valid(false).default(false),
     otherwise: Joi.boolean().default(true),
   }),
 
