@@ -1027,6 +1027,193 @@ describe('s42a-op-05 · a delegated HR Admin gets zero data access from the six-
     expect(res.status).toBe(404);
     expect(await cityOf(p.ghost.id)).toBe(before);
   });
+
+  // ── E4-C04b (test-design-epic-platform-4.md): "every other hr-admin
+  // feature route that exists at run time." Test 4 above already proved
+  // `org:relationships:write` and `employee:departure:record` open for Nadia
+  // through ONE route each (`POST .../relationships`, `POST .../departures`).
+  // The rest of this describe block enumerates the REMAINING routes carrying
+  // those same two feature keys (`relationships.controller.ts`,
+  // `departments.controller.ts`, `departures.controller.ts`), plus
+  // `user-management:create` and `user-management:deactivate`, each of which
+  // has none of its routes exercised by Nadia elsewhere. All of it is real
+  // HTTP against the real bootstrap-delegated role — no `RunFixtures` grant.
+  it('s42a-op-05 Test 8 · org:relationships:write — she sets S2’s people partner to T → 200, edge persisted', async () => {
+    const p = requireProvisioning();
+
+    const res = await putPeoplePartner(p.s2.id, p.nadia.id, p.t.id);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      userId: p.s2.id,
+      type: 'people_partner',
+      reportsToUserId: p.t.id,
+    });
+  });
+
+  it('s42a-op-05 Test 9 · org:relationships:write — she removes S2’s people partner → 200, edge gone', async () => {
+    const p = requireProvisioning();
+
+    const res = await deletePeoplePartner(p.s2.id, p.nadia.id);
+
+    expect(res.status).toBe(200);
+    const remaining = await testApp.prisma.relationship.findMany({
+      where: { userId: p.s2.id, type: 'people_partner' },
+    });
+    expect(remaining).toHaveLength(0);
+  });
+
+  it('s42a-op-05 Test 10 · org:relationships:write — she revokes the S2→T manager edge by id → 200, edge gone', async () => {
+    const p = requireProvisioning();
+    // The `direct` edge Test 4 created (`POST /users/<S2>/relationships` with
+    // `targetId: T`) — read back, never a hardcoded id.
+    const edge = await testApp.prisma.relationship.findFirst({
+      where: { userId: p.s2.id, type: 'direct', reportsToUserId: p.t.id },
+    });
+    expect(edge).not.toBeNull();
+
+    const res = await deleteRelationship(p.s2.id, edge!.id, p.nadia.id);
+
+    expect(res.status).toBe(200);
+    expect(
+      await testApp.prisma.relationship.findUnique({ where: { id: edge!.id } }),
+    ).toBeNull();
+  });
+
+  it('s42a-op-05 Test 11 · org:relationships:write — she gives T a second, concurrent department membership → 201', async () => {
+    const p = requireProvisioning();
+
+    const res = await postDepartmentMembership(
+      p.t.id,
+      p.nadia.id,
+      p.departmentId,
+    );
+
+    expect(res.status).toBe(201);
+    const current = await testApp.prisma.departmentMembership.findMany({
+      where: { userId: p.t.id, validTo: null },
+    });
+    expect(current.map((m) => m.departmentId)).toContain(p.departmentId);
+  });
+
+  it('s42a-op-05 Test 12 · org:relationships:write — she closes that membership → 200, membership closed', async () => {
+    const p = requireProvisioning();
+
+    const res = await deleteDepartmentMembership(
+      p.t.id,
+      p.departmentId,
+      p.nadia.id,
+    );
+
+    expect(res.status).toBe(200);
+    const current = await testApp.prisma.departmentMembership.findMany({
+      where: { userId: p.t.id, departmentId: p.departmentId, validTo: null },
+    });
+    expect(current).toHaveLength(0);
+  });
+
+  it('s42a-op-05 Test 13 · org:relationships:write — she sets S as the QA department’s manager → 200', async () => {
+    const p = requireProvisioning();
+
+    const res = await putDepartmentManager(p.qaDepartmentId, p.nadia.id, p.s.id);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      departmentId: p.qaDepartmentId,
+      managerUserId: p.s.id,
+    });
+  });
+
+  it('s42a-op-05 Test 14 · org:relationships:write — she removes the QA department’s manager → 200', async () => {
+    const p = requireProvisioning();
+
+    const res = await deleteDepartmentManager(p.qaDepartmentId, p.nadia.id);
+
+    expect(res.status).toBe(200);
+    const managerLinks = await testApp.prisma.userPolicy.findMany({
+      where: {
+        policy: {
+          type: 'AR',
+          targetType: 'department',
+          targetId: p.qaDepartmentId,
+          targetRole: 'unit-manager',
+        },
+      },
+    });
+    expect(managerLinks).toHaveLength(0);
+  });
+
+  it('s42a-op-05 Test 15 · user-management:create — she imports one more employee → 200, created', async () => {
+    const p = requireProvisioning();
+
+    const res = await importCsv(
+      p.nadia.id,
+      toDeliveredCsv([
+        csvRow('nadia-import', {
+          DepartmentId: `${importMarker}-2`,
+          DepartmentName: `${importMarker}-QA`,
+        }),
+      ]),
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ created: 1, errors: [] });
+    const created = await findEmployee('nadia-import');
+    expect(created?.isActive).toBe(true);
+  });
+
+  it('s42a-op-05 Test 16 · user-management:deactivate — she deactivates the employee she just imported → 200, isActive false', async () => {
+    const p = requireProvisioning();
+    const target = await findEmployee('nadia-import');
+    expect(target).not.toBeNull();
+
+    const res = await deactivateUser(target!.id, p.nadia.id);
+
+    expect(res.status).toBe(200);
+    const row = await testApp.prisma.user.findUnique({
+      where: { id: target!.id },
+    });
+    expect(row?.isActive).toBe(false);
+  });
+
+  it('s42a-op-05 Test 17 · employee:departure:record — she reads back S2’s departure by id → 200', async () => {
+    const p = requireProvisioning();
+    // The departure Test 4 recorded for S2 — read back by natural key rather
+    // than assumed, then exercised through the dedicated find-one route.
+    const rows = await queryDepartureRows(testApp.prisma, p.s2.id);
+    expect(rows.length).toBeGreaterThan(0);
+    const departureId = rows[0].id;
+
+    const res = await getDeparture(p.s2.id, departureId, p.nadia.id);
+
+    expect(res.status).toBe(200);
+  });
+
+  // The other two `employee:departure:record` routes —
+  // `POST :id/departures/:departureId/retry` (Story 5.2, requires a
+  // `retry_wait` departure produced by a fenced-apply failure) and
+  // `POST :id/departure-reparenting` (requires an unresolved reparenting
+  // blocker) — need domain preconditions this suite does not build elsewhere
+  // and are not exercised here. Structurally they carry the IDENTICAL
+  // `@RequireFeature(RECORD_A_DEPARTURE_FEATURE)` decorator and the same
+  // `AccessControlGuard`/`isAllowed` mechanism just proven open for Nadia via
+  // `record` (Test 4) and `findOne` (Test 17) — confirmed by source read
+  // (`departures.controller.ts`), not re-asserted by a fourth HTTP call.
+  it('s42a-op-05 Test 18 · structural — retry and reparenting carry the identical employee:departure:record feature key', () => {
+    const controllerPath = path.join(
+      BACKEND_ROOT,
+      'src/user-management/application/controllers/departures.controller.ts',
+    );
+    const source = readFileSync(controllerPath, 'utf8');
+    const requireFeatureCalls = source.match(
+      /@RequireFeature\(RECORD_A_DEPARTURE_FEATURE\)/g,
+    );
+    // record, findOne, retry, reparent — all four routes, one constant.
+    expect(requireFeatureCalls).toHaveLength(4);
+    expect(source).toContain(
+      "const RECORD_A_DEPARTURE_FEATURE = 'employee:departure:record'",
+    );
+  });
 });
 
 // ───────────────────────────────────────────────────────────────────────────
