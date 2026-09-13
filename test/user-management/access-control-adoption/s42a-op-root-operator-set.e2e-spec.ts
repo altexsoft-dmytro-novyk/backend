@@ -176,6 +176,15 @@ interface Provisioning {
   nadia: User;
   t: User;
   s2: User;
+  /** The `Department` row `POST /users/import` created for Nadia/T/S2 (QA). */
+  qaDepartmentId: string;
+  /**
+   * E4-C04c fixture only: an imported employee deactivated in-suite right
+   * after import, used exclusively as the "inactive target" half of the
+   * hidden-target 404 oracle for root and Nadia. Never read or written by any
+   * other test in this file.
+   */
+  ghost: User;
 }
 
 let provisioned: Provisioning | null = null;
@@ -370,6 +379,75 @@ const postEvent = (
     .set('authorization', bearer(viewerId))
     .send(body);
 
+// ── E4-C04b fixture-only helpers: the remaining routes gated by the
+// canonical `hr-admin` FEATURE keys (`org:relationships:write`,
+// `employee:departure:record`, `user-management:create`,
+// `user-management:deactivate`), beyond the two each already exercised by
+// s42a-op-03/05. Every one carries the identical `@RequireFeature` +
+// `AccessControlGuard` mechanism as its already-tested sibling. ──────────────
+
+const putPeoplePartner = (
+  employeeId: string,
+  viewerId: string,
+  targetId: string,
+) =>
+  request(server())
+    .put(`/users/${employeeId}/relationships/people-partner`)
+    .set('authorization', bearer(viewerId))
+    .send({ targetId });
+
+const deletePeoplePartner = (employeeId: string, viewerId: string) =>
+  request(server())
+    .delete(`/users/${employeeId}/relationships/people-partner`)
+    .set('authorization', bearer(viewerId));
+
+const deleteRelationship = (
+  employeeId: string,
+  relationshipId: string,
+  viewerId: string,
+) =>
+  request(server())
+    .delete(`/users/${employeeId}/relationships/${relationshipId}`)
+    .set('authorization', bearer(viewerId));
+
+const postDepartmentMembership = (
+  employeeId: string,
+  viewerId: string,
+  departmentId: string,
+) =>
+  request(server())
+    .post(`/users/${employeeId}/departments`)
+    .set('authorization', bearer(viewerId))
+    .send({ departmentId });
+
+const deleteDepartmentMembership = (
+  employeeId: string,
+  departmentId: string,
+  viewerId: string,
+) =>
+  request(server())
+    .delete(`/users/${employeeId}/departments/${departmentId}`)
+    .set('authorization', bearer(viewerId));
+
+const deleteDepartmentManager = (deptId: string, viewerId: string) =>
+  request(server())
+    .delete(`/departments/${deptId}/manager`)
+    .set('authorization', bearer(viewerId));
+
+const deactivateUser = (targetId: string, viewerId: string) =>
+  request(server())
+    .delete(`/users/${targetId}`)
+    .set('authorization', bearer(viewerId));
+
+const getDeparture = (
+  employeeId: string,
+  departureId: string,
+  viewerId: string,
+) =>
+  request(server())
+    .get(`/users/${employeeId}/departures/${departureId}`)
+    .set('authorization', bearer(viewerId));
+
 // ───────────────────────────────────────────────────────────────────────────
 // Provisioning — the production path and nothing else.
 // ───────────────────────────────────────────────────────────────────────────
@@ -441,6 +519,10 @@ beforeAll(async () => {
         DepartmentId: `${importMarker}-2`,
         DepartmentName: `${importMarker}-QA`,
       }),
+      csvRow('ghost', {
+        DepartmentId: `${importMarker}-2`,
+        DepartmentName: `${importMarker}-QA`,
+      }),
     ]),
   );
 
@@ -453,24 +535,46 @@ beforeAll(async () => {
     return;
   }
 
-  const [s, m, nadia, t, s2] = await Promise.all([
+  const [s, m, nadia, t, s2, ghostImported] = await Promise.all([
     findEmployee('s'),
     findEmployee('m'),
     findEmployee('nadia'),
     findEmployee('t'),
     findEmployee('s2'),
+    findEmployee('ghost'),
   ]);
   const department = await testApp.prisma.department.findFirst({
     where: { externalId: `${importMarker}-1`, name: `${importMarker}-JS` },
     select: { id: true },
   });
+  const qaDepartment = await testApp.prisma.department.findFirst({
+    where: { externalId: `${importMarker}-2`, name: `${importMarker}-QA` },
+    select: { id: true },
+  });
 
-  if (!s || !m || !nadia || !t || !s2 || !department) {
+  if (
+    !s ||
+    !m ||
+    !nadia ||
+    !t ||
+    !s2 ||
+    !ghostImported ||
+    !department ||
+    !qaDepartment
+  ) {
     provisioningDiagnosis =
       'PRECONDITION-REPAIR RED: the import reported success but the persisted ' +
       'rows it should have created are not readable back.';
     return;
   }
+
+  // E4-C04c fixture only: deactivate `ghost` right after import — a real row
+  // that existed, now `isActive: false`, mirroring `umac-11` Test 4's own
+  // "fixture setup only" deactivation. Never touched again by any other test.
+  const ghost = await testApp.prisma.user.update({
+    where: { id: ghostImported.id },
+    data: { isActive: false },
+  });
 
   provisioned = {
     deploy,
@@ -491,6 +595,8 @@ beforeAll(async () => {
     nadia,
     t,
     s2,
+    qaDepartmentId: qaDepartment.id,
+    ghost,
   };
 });
 
@@ -504,6 +610,7 @@ afterAll(async () => {
           provisioned.nadia.id,
           provisioned.t.id,
           provisioned.s2.id,
+          provisioned.ghost.id,
         ]
       : [];
     const steps: Array<() => Promise<unknown>> = [
@@ -756,6 +863,45 @@ describe('s42a-op-04 · the grown operator set gives root no data reach it did n
       expect(Object.keys(SECTION_ACCESS_MATRIX)).not.toContain(key);
     }
   });
+
+  // E4-C04a (test-design-epic-platform-4.md): root's own card is `self`, not
+  // `reporting` — the operator set gives root no relationship row of its own
+  // (s42a-op-03 precondition 2 / s42b-tr-03), so the audience over root's own
+  // card resolves no higher than `self`, which §3.2 row S1 gives `R`.
+  it("s42a-op-04 Test 4 · root reads its own card → 200, canEdit false (self, not reporting)", async () => {
+    const p = requireProvisioning();
+    const row = await testApp.prisma.user.findUnique({
+      where: { id: p.root.id },
+    });
+
+    const res = await getUser(p.root.id, p.root.id);
+
+    expect(res.status).toBe(200);
+    expectExactS1CardEnvelope(res.body, s1CardOf(row!), false);
+  });
+
+  // E4-C04c (PM/AD-24, CONFLICT-UM-01): the hidden-target 404 oracle
+  // (`umac-11-hidden-target-denial-oracle.e2e-spec.ts`) evidenced against the
+  // root persona specifically — the section-access guard resolves the hidden
+  // target before any section question, so root's operator-set keys (which
+  // are feature keys, not section keys) are never even in play.
+  it('s42a-op-04 Test 5 · root PATCH of a missing target id → 404, not 403', async () => {
+    const p = requireProvisioning();
+
+    const res = await patchUser(uuidv7(), p.root.id, { city: 'Berlin' });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('s42a-op-04 Test 6 · root PATCH of an inactive target → 404, not 403, row unchanged', async () => {
+    const p = requireProvisioning();
+    const before = await cityOf(p.ghost.id);
+
+    const res = await patchUser(p.ghost.id, p.root.id, { city: 'Berlin' });
+
+    expect(res.status).toBe(404);
+    expect(await cityOf(p.ghost.id)).toBe(before);
+  });
 });
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -858,6 +1004,215 @@ describe('s42a-op-05 · a delegated HR Admin gets zero data access from the six-
     for (const key of CANONICAL_KEYS) {
       expect(Object.keys(SECTION_ACCESS_MATRIX)).not.toContain(key);
     }
+  });
+
+  // E4-C04c (PM/AD-24, CONFLICT-UM-01): the hidden-target 404 oracle
+  // evidenced against the delegated HR Admin persona specifically — her six
+  // canonical feature keys never reach the section decision, so a hidden
+  // target is `404` for her exactly as it is for an ordinary caller.
+  it('s42a-op-05 Test 6 · the delegated holder PATCHes a missing target id → 404, not 403', async () => {
+    const p = requireProvisioning();
+
+    const res = await patchUser(uuidv7(), p.nadia.id, { city: 'Berlin' });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('s42a-op-05 Test 7 · the delegated holder PATCHes an inactive target → 404, not 403, row unchanged', async () => {
+    const p = requireProvisioning();
+    const before = await cityOf(p.ghost.id);
+
+    const res = await patchUser(p.ghost.id, p.nadia.id, { city: 'Berlin' });
+
+    expect(res.status).toBe(404);
+    expect(await cityOf(p.ghost.id)).toBe(before);
+  });
+
+  // ── E4-C04b (test-design-epic-platform-4.md): "every other hr-admin
+  // feature route that exists at run time." Test 4 above already proved
+  // `org:relationships:write` and `employee:departure:record` open for Nadia
+  // through ONE route each (`POST .../relationships`, `POST .../departures`).
+  // The rest of this describe block enumerates the REMAINING routes carrying
+  // those same two feature keys (`relationships.controller.ts`,
+  // `departments.controller.ts`, `departures.controller.ts`), plus
+  // `user-management:create` and `user-management:deactivate`, each of which
+  // has none of its routes exercised by Nadia elsewhere. All of it is real
+  // HTTP against the real bootstrap-delegated role — no `RunFixtures` grant.
+  it('s42a-op-05 Test 8 · org:relationships:write — she sets S2’s people partner to T → 200, edge persisted', async () => {
+    const p = requireProvisioning();
+
+    const res = await putPeoplePartner(p.s2.id, p.nadia.id, p.t.id);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      userId: p.s2.id,
+      type: 'people_partner',
+      reportsToUserId: p.t.id,
+    });
+  });
+
+  it('s42a-op-05 Test 9 · org:relationships:write — she removes S2’s people partner → 200, edge gone', async () => {
+    const p = requireProvisioning();
+
+    const res = await deletePeoplePartner(p.s2.id, p.nadia.id);
+
+    expect(res.status).toBe(200);
+    const remaining = await testApp.prisma.relationship.findMany({
+      where: { userId: p.s2.id, type: 'people_partner' },
+    });
+    expect(remaining).toHaveLength(0);
+  });
+
+  it('s42a-op-05 Test 10 · org:relationships:write — she revokes the S2→T manager edge by id → 200, edge gone', async () => {
+    const p = requireProvisioning();
+    // The `direct` edge Test 4 created (`POST /users/<S2>/relationships` with
+    // `targetId: T`) — read back, never a hardcoded id.
+    const edge = await testApp.prisma.relationship.findFirst({
+      where: { userId: p.s2.id, type: 'direct', reportsToUserId: p.t.id },
+    });
+    expect(edge).not.toBeNull();
+
+    const res = await deleteRelationship(p.s2.id, edge!.id, p.nadia.id);
+
+    expect(res.status).toBe(200);
+    expect(
+      await testApp.prisma.relationship.findUnique({ where: { id: edge!.id } }),
+    ).toBeNull();
+  });
+
+  it('s42a-op-05 Test 11 · org:relationships:write — she gives T a second, concurrent department membership → 201', async () => {
+    const p = requireProvisioning();
+
+    const res = await postDepartmentMembership(
+      p.t.id,
+      p.nadia.id,
+      p.departmentId,
+    );
+
+    expect(res.status).toBe(201);
+    const current = await testApp.prisma.departmentMembership.findMany({
+      where: { userId: p.t.id, validTo: null },
+    });
+    expect(current.map((m) => m.departmentId)).toContain(p.departmentId);
+  });
+
+  it('s42a-op-05 Test 12 · org:relationships:write — she closes that membership → 200, membership closed', async () => {
+    const p = requireProvisioning();
+
+    const res = await deleteDepartmentMembership(
+      p.t.id,
+      p.departmentId,
+      p.nadia.id,
+    );
+
+    expect(res.status).toBe(200);
+    const current = await testApp.prisma.departmentMembership.findMany({
+      where: { userId: p.t.id, departmentId: p.departmentId, validTo: null },
+    });
+    expect(current).toHaveLength(0);
+  });
+
+  it('s42a-op-05 Test 13 · org:relationships:write — she sets S as the QA department’s manager → 200', async () => {
+    const p = requireProvisioning();
+
+    const res = await putDepartmentManager(p.qaDepartmentId, p.nadia.id, p.s.id);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      departmentId: p.qaDepartmentId,
+      managerUserId: p.s.id,
+    });
+  });
+
+  it('s42a-op-05 Test 14 · org:relationships:write — she removes the QA department’s manager → 200', async () => {
+    const p = requireProvisioning();
+
+    const res = await deleteDepartmentManager(p.qaDepartmentId, p.nadia.id);
+
+    expect(res.status).toBe(200);
+    const managerLinks = await testApp.prisma.userPolicy.findMany({
+      where: {
+        policy: {
+          type: 'AR',
+          targetType: 'department',
+          targetId: p.qaDepartmentId,
+          targetRole: 'unit-manager',
+        },
+      },
+    });
+    expect(managerLinks).toHaveLength(0);
+  });
+
+  it('s42a-op-05 Test 15 · user-management:create — she imports one more employee → 200, created', async () => {
+    const p = requireProvisioning();
+
+    const res = await importCsv(
+      p.nadia.id,
+      toDeliveredCsv([
+        csvRow('nadia-import', {
+          DepartmentId: `${importMarker}-2`,
+          DepartmentName: `${importMarker}-QA`,
+        }),
+      ]),
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ created: 1, errors: [] });
+    const created = await findEmployee('nadia-import');
+    expect(created?.isActive).toBe(true);
+  });
+
+  it('s42a-op-05 Test 16 · user-management:deactivate — she deactivates the employee she just imported → 200, isActive false', async () => {
+    const p = requireProvisioning();
+    const target = await findEmployee('nadia-import');
+    expect(target).not.toBeNull();
+
+    const res = await deactivateUser(target!.id, p.nadia.id);
+
+    expect(res.status).toBe(200);
+    const row = await testApp.prisma.user.findUnique({
+      where: { id: target!.id },
+    });
+    expect(row?.isActive).toBe(false);
+  });
+
+  it('s42a-op-05 Test 17 · employee:departure:record — she reads back S2’s departure by id → 200', async () => {
+    const p = requireProvisioning();
+    // The departure Test 4 recorded for S2 — read back by natural key rather
+    // than assumed, then exercised through the dedicated find-one route.
+    const rows = await queryDepartureRows(testApp.prisma, p.s2.id);
+    expect(rows.length).toBeGreaterThan(0);
+    const departureId = rows[0].id;
+
+    const res = await getDeparture(p.s2.id, departureId, p.nadia.id);
+
+    expect(res.status).toBe(200);
+  });
+
+  // The other two `employee:departure:record` routes —
+  // `POST :id/departures/:departureId/retry` (Story 5.2, requires a
+  // `retry_wait` departure produced by a fenced-apply failure) and
+  // `POST :id/departure-reparenting` (requires an unresolved reparenting
+  // blocker) — need domain preconditions this suite does not build elsewhere
+  // and are not exercised here. Structurally they carry the IDENTICAL
+  // `@RequireFeature(RECORD_A_DEPARTURE_FEATURE)` decorator and the same
+  // `AccessControlGuard`/`isAllowed` mechanism just proven open for Nadia via
+  // `record` (Test 4) and `findOne` (Test 17) — confirmed by source read
+  // (`departures.controller.ts`), not re-asserted by a fourth HTTP call.
+  it('s42a-op-05 Test 18 · structural — retry and reparenting carry the identical employee:departure:record feature key', () => {
+    const controllerPath = path.join(
+      BACKEND_ROOT,
+      'src/user-management/application/controllers/departures.controller.ts',
+    );
+    const source = readFileSync(controllerPath, 'utf8');
+    const requireFeatureCalls = source.match(
+      /@RequireFeature\(RECORD_A_DEPARTURE_FEATURE\)/g,
+    );
+    // record, findOne, retry, reparent — all four routes, one constant.
+    expect(requireFeatureCalls).toHaveLength(4);
+    expect(source).toContain(
+      "const RECORD_A_DEPARTURE_FEATURE = 'employee:departure:record'",
+    );
   });
 });
 

@@ -13,27 +13,22 @@ import {
  * Scenario: docs/test-cases/user-management/access-control-adoption/
  *   umac-05-unresolved-session-read-denied.md
  *
- * `GET /users/:id` has TWO denial shapes and NO `404` authorization branch (the
- * "leak-free 404" convention was withdrawn 2026-09-01 — internal directory,
- * standard REST codes):
+ * `GET /users/:id` denial shapes (PM/AD-24; the 2026-09-01 "no 404" decision
+ * is superseded — regenerated as umac-11, CONFLICT-UM-01):
  *   - **Unresolved session → `401`** (the SESSION layer). Epic 2's real
  *     `JwtSessionResolverAdapter` returns `null` for a token — JWT or the
  *     `<token:persona>` test shorthand — whose principal is not an *active*
  *     `User`: a literal persona placeholder (`<token:Bob>`), a deactivated
- *     caller, or a bogus id. (The retired interim resolver was lax and let these
- *     reach the guard as an empty-audience `403`.)
- *   - **Authenticated active viewer, empty audience → `403`.** On this read
- *     route `colleague` is the floor, so an empty audience means the target is
- *     not an active `User`. No existence distinction — a forbidden target and a
- *     missing target both return `403`, from `SectionAccessGuard`'s denied
- *     `hasSectionAccess('profile:identity', 'read')` (PLAT-E4-S4.1c moved this
- *     route onto `@RequireSectionAccess`; before that the `403` came from
- *     `AccessControlGuard`).
+ *     caller, or a bogus id.
+ *   - **Authenticated active viewer, target not an active `User` → `404`,**
+ *     leak-free, from `SectionAccessGuard` before any section question. A
+ *     visible target the viewer may not read would be `403`, but on this read
+ *     route `colleague` is the floor, so no visible target is unreadable.
  *
  * AD-3: real `AppModule`, real Prisma / migrated PostgreSQL, no provider
  * overrides.
  */
-describe('UMAC-1 — GET /users/:id denials: 401 unresolved session / 403 empty audience (e2e)', () => {
+describe('UMAC-1 — GET /users/:id denials: 401 unresolved session / 404 hidden target (e2e)', () => {
   let testApp: TestApp;
   let fx: RunFixtures;
 
@@ -90,7 +85,9 @@ describe('UMAC-1 — GET /users/:id denials: 401 unresolved session / 403 empty 
     expectLeakFreeBody(res.body, target);
   });
 
-  it('UMAC-05 Test 3 — non-existent target, valid active caller → 403 denial (no existence distinction)', async () => {
+  // SUPERSEDED 2026-09-12 by umac-11 (PM/AD-24, CONFLICT-UM-01): a missing
+  // target is `404`, leak-free. Was the 2026-09-01 empty-audience `403`.
+  it('UMAC-05 Test 3 — non-existent target, valid active caller → 404, leak-free (umac-11)', async () => {
     const caller = await fx.user('umac05-caller', { firstName: 'Caller' });
     // A well-formed id that resolves to no `User` row.
     const missingTargetId = '01890000-0000-7000-8000-0000000000ff';
@@ -99,11 +96,9 @@ describe('UMAC-1 — GET /users/:id denials: 401 unresolved session / 403 empty 
       .get(`/users/${missingTargetId}`)
       .set('authorization', bearer(caller.id));
 
-    // `resolveAudiences(V, [<missing>])` returns an empty `Set` (target is not
-    // an active `User`) → the guard denies → `403`. A forbidden target and a
-    // missing one get the identical response — there is no `404` branch on this
-    // route.
-    expect(res.status).toBe(403);
+    // The target is not an active `User` → `SectionAccessGuard` answers `404`
+    // before any section question (PM/AD-24).
+    expect(res.status).toBe(404);
     expectLeakFreeBody(res.body);
   });
 });
