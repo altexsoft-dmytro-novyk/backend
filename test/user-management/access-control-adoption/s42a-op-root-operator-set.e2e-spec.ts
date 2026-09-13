@@ -176,6 +176,8 @@ interface Provisioning {
   nadia: User;
   t: User;
   s2: User;
+  /** The `Department` row `POST /users/import` created for Nadia/T/S2 (QA). */
+  qaDepartmentId: string;
   /**
    * E4-C04c fixture only: an imported employee deactivated in-suite right
    * after import, used exclusively as the "inactive target" half of the
@@ -377,6 +379,75 @@ const postEvent = (
     .set('authorization', bearer(viewerId))
     .send(body);
 
+// ── E4-C04b fixture-only helpers: the remaining routes gated by the
+// canonical `hr-admin` FEATURE keys (`org:relationships:write`,
+// `employee:departure:record`, `user-management:create`,
+// `user-management:deactivate`), beyond the two each already exercised by
+// s42a-op-03/05. Every one carries the identical `@RequireFeature` +
+// `AccessControlGuard` mechanism as its already-tested sibling. ──────────────
+
+const putPeoplePartner = (
+  employeeId: string,
+  viewerId: string,
+  targetId: string,
+) =>
+  request(server())
+    .put(`/users/${employeeId}/relationships/people-partner`)
+    .set('authorization', bearer(viewerId))
+    .send({ targetId });
+
+const deletePeoplePartner = (employeeId: string, viewerId: string) =>
+  request(server())
+    .delete(`/users/${employeeId}/relationships/people-partner`)
+    .set('authorization', bearer(viewerId));
+
+const deleteRelationship = (
+  employeeId: string,
+  relationshipId: string,
+  viewerId: string,
+) =>
+  request(server())
+    .delete(`/users/${employeeId}/relationships/${relationshipId}`)
+    .set('authorization', bearer(viewerId));
+
+const postDepartmentMembership = (
+  employeeId: string,
+  viewerId: string,
+  departmentId: string,
+) =>
+  request(server())
+    .post(`/users/${employeeId}/departments`)
+    .set('authorization', bearer(viewerId))
+    .send({ departmentId });
+
+const deleteDepartmentMembership = (
+  employeeId: string,
+  departmentId: string,
+  viewerId: string,
+) =>
+  request(server())
+    .delete(`/users/${employeeId}/departments/${departmentId}`)
+    .set('authorization', bearer(viewerId));
+
+const deleteDepartmentManager = (deptId: string, viewerId: string) =>
+  request(server())
+    .delete(`/departments/${deptId}/manager`)
+    .set('authorization', bearer(viewerId));
+
+const deactivateUser = (targetId: string, viewerId: string) =>
+  request(server())
+    .delete(`/users/${targetId}`)
+    .set('authorization', bearer(viewerId));
+
+const getDeparture = (
+  employeeId: string,
+  departureId: string,
+  viewerId: string,
+) =>
+  request(server())
+    .get(`/users/${employeeId}/departures/${departureId}`)
+    .set('authorization', bearer(viewerId));
+
 // ───────────────────────────────────────────────────────────────────────────
 // Provisioning — the production path and nothing else.
 // ───────────────────────────────────────────────────────────────────────────
@@ -476,8 +547,21 @@ beforeAll(async () => {
     where: { externalId: `${importMarker}-1`, name: `${importMarker}-JS` },
     select: { id: true },
   });
+  const qaDepartment = await testApp.prisma.department.findFirst({
+    where: { externalId: `${importMarker}-2`, name: `${importMarker}-QA` },
+    select: { id: true },
+  });
 
-  if (!s || !m || !nadia || !t || !s2 || !ghostImported || !department) {
+  if (
+    !s ||
+    !m ||
+    !nadia ||
+    !t ||
+    !s2 ||
+    !ghostImported ||
+    !department ||
+    !qaDepartment
+  ) {
     provisioningDiagnosis =
       'PRECONDITION-REPAIR RED: the import reported success but the persisted ' +
       'rows it should have created are not readable back.';
@@ -511,6 +595,7 @@ beforeAll(async () => {
     nadia,
     t,
     s2,
+    qaDepartmentId: qaDepartment.id,
     ghost,
   };
 });
