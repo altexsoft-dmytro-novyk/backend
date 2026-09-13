@@ -176,6 +176,13 @@ interface Provisioning {
   nadia: User;
   t: User;
   s2: User;
+  /**
+   * E4-C04c fixture only: an imported employee deactivated in-suite right
+   * after import, used exclusively as the "inactive target" half of the
+   * hidden-target 404 oracle for root and Nadia. Never read or written by any
+   * other test in this file.
+   */
+  ghost: User;
 }
 
 let provisioned: Provisioning | null = null;
@@ -441,6 +448,10 @@ beforeAll(async () => {
         DepartmentId: `${importMarker}-2`,
         DepartmentName: `${importMarker}-QA`,
       }),
+      csvRow('ghost', {
+        DepartmentId: `${importMarker}-2`,
+        DepartmentName: `${importMarker}-QA`,
+      }),
     ]),
   );
 
@@ -453,24 +464,33 @@ beforeAll(async () => {
     return;
   }
 
-  const [s, m, nadia, t, s2] = await Promise.all([
+  const [s, m, nadia, t, s2, ghostImported] = await Promise.all([
     findEmployee('s'),
     findEmployee('m'),
     findEmployee('nadia'),
     findEmployee('t'),
     findEmployee('s2'),
+    findEmployee('ghost'),
   ]);
   const department = await testApp.prisma.department.findFirst({
     where: { externalId: `${importMarker}-1`, name: `${importMarker}-JS` },
     select: { id: true },
   });
 
-  if (!s || !m || !nadia || !t || !s2 || !department) {
+  if (!s || !m || !nadia || !t || !s2 || !ghostImported || !department) {
     provisioningDiagnosis =
       'PRECONDITION-REPAIR RED: the import reported success but the persisted ' +
       'rows it should have created are not readable back.';
     return;
   }
+
+  // E4-C04c fixture only: deactivate `ghost` right after import — a real row
+  // that existed, now `isActive: false`, mirroring `umac-11` Test 4's own
+  // "fixture setup only" deactivation. Never touched again by any other test.
+  const ghost = await testApp.prisma.user.update({
+    where: { id: ghostImported.id },
+    data: { isActive: false },
+  });
 
   provisioned = {
     deploy,
@@ -491,6 +511,7 @@ beforeAll(async () => {
     nadia,
     t,
     s2,
+    ghost,
   };
 });
 
@@ -504,6 +525,7 @@ afterAll(async () => {
           provisioned.nadia.id,
           provisioned.t.id,
           provisioned.s2.id,
+          provisioned.ghost.id,
         ]
       : [];
     const steps: Array<() => Promise<unknown>> = [
@@ -756,6 +778,45 @@ describe('s42a-op-04 · the grown operator set gives root no data reach it did n
       expect(Object.keys(SECTION_ACCESS_MATRIX)).not.toContain(key);
     }
   });
+
+  // E4-C04a (test-design-epic-platform-4.md): root's own card is `self`, not
+  // `reporting` — the operator set gives root no relationship row of its own
+  // (s42a-op-03 precondition 2 / s42b-tr-03), so the audience over root's own
+  // card resolves no higher than `self`, which §3.2 row S1 gives `R`.
+  it("s42a-op-04 Test 4 · root reads its own card → 200, canEdit false (self, not reporting)", async () => {
+    const p = requireProvisioning();
+    const row = await testApp.prisma.user.findUnique({
+      where: { id: p.root.id },
+    });
+
+    const res = await getUser(p.root.id, p.root.id);
+
+    expect(res.status).toBe(200);
+    expectExactS1CardEnvelope(res.body, s1CardOf(row!), false);
+  });
+
+  // E4-C04c (PM/AD-24, CONFLICT-UM-01): the hidden-target 404 oracle
+  // (`umac-11-hidden-target-denial-oracle.e2e-spec.ts`) evidenced against the
+  // root persona specifically — the section-access guard resolves the hidden
+  // target before any section question, so root's operator-set keys (which
+  // are feature keys, not section keys) are never even in play.
+  it('s42a-op-04 Test 5 · root PATCH of a missing target id → 404, not 403', async () => {
+    const p = requireProvisioning();
+
+    const res = await patchUser(uuidv7(), p.root.id, { city: 'Berlin' });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('s42a-op-04 Test 6 · root PATCH of an inactive target → 404, not 403, row unchanged', async () => {
+    const p = requireProvisioning();
+    const before = await cityOf(p.ghost.id);
+
+    const res = await patchUser(p.ghost.id, p.root.id, { city: 'Berlin' });
+
+    expect(res.status).toBe(404);
+    expect(await cityOf(p.ghost.id)).toBe(before);
+  });
 });
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -858,6 +919,28 @@ describe('s42a-op-05 · a delegated HR Admin gets zero data access from the six-
     for (const key of CANONICAL_KEYS) {
       expect(Object.keys(SECTION_ACCESS_MATRIX)).not.toContain(key);
     }
+  });
+
+  // E4-C04c (PM/AD-24, CONFLICT-UM-01): the hidden-target 404 oracle
+  // evidenced against the delegated HR Admin persona specifically — her six
+  // canonical feature keys never reach the section decision, so a hidden
+  // target is `404` for her exactly as it is for an ordinary caller.
+  it('s42a-op-05 Test 6 · the delegated holder PATCHes a missing target id → 404, not 403', async () => {
+    const p = requireProvisioning();
+
+    const res = await patchUser(uuidv7(), p.nadia.id, { city: 'Berlin' });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('s42a-op-05 Test 7 · the delegated holder PATCHes an inactive target → 404, not 403, row unchanged', async () => {
+    const p = requireProvisioning();
+    const before = await cityOf(p.ghost.id);
+
+    const res = await patchUser(p.ghost.id, p.nadia.id, { city: 'Berlin' });
+
+    expect(res.status).toBe(404);
+    expect(await cityOf(p.ghost.id)).toBe(before);
   });
 });
 

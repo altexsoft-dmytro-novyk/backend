@@ -39,6 +39,21 @@ import {
 // (ACF-AU-05, ACF-FC-01, ACF-FC-02) assert resolver audience labels directly,
 // because the 2026-09-01 UM contract returns the S1 card (200) for colleague
 // reads — HTTP status is no longer the resolver oracle for those scenarios.
+//
+// P0 ACF-AU-R1 (2026-09-13, R-PLAT2-01/R-PLAT2-03): since that same contract
+// answer makes GET /users/:id return 200 to ANY active authenticated viewer —
+// not only self/reporting/pp — the route no longer discriminates the audience
+// ACF-AU-01..04 each name. Each of those four now carries its own facade-level
+// exact-set assertion (the ACF-FC-04 pattern) as this epic's real oracle. The
+// GET /users/:id 200 checks are kept alongside them, relabelled as separate
+// UM-owned route evidence, not as proof of the named audience.
+//
+// P1 ACF-FC-05 (2026-09-13, R-PLAT2-04): makes explicit, as a scenario in
+// this suite, the empty-set rule production commit 9e69682 already shipped —
+// a deactivated target or a deactivated viewer each yield an EMPTY audience
+// set from AccessControlFacade.resolveAudiences, never the Colleague floor.
+// This is not the AD-20 dismissed-target read-only projection, which remains
+// unimplemented pending a Departure/EmploymentStatus persistence seam.
 class FacadeBackedAccessControlAdapter implements AccessControlPort {
   constructor(private readonly facade: AccessControlFacade) {}
 
@@ -207,7 +222,19 @@ describe('Access Control Phase 0 — audience resolution over GET /users/:id (e2
   });
 
   describe('ACF-AU-01 · Self reads own profile', () => {
-    it('returns 200 for the viewer’s own record', async () => {
+    it('resolves the audience set to exactly {self}', async () => {
+      const facade = app.get(AccessControlFacade);
+
+      const audiences = await facade.resolveAudiences(ids.Alice, [ids.Alice]);
+
+      expectAudienceLabels(audiences, ids.Alice, ['self']);
+    });
+
+    // UM-owned route evidence only (R-PLAT2-03): since 2026-09-01 GET
+    // /users/:id returns 200 to any active authenticated viewer, so this no
+    // longer discriminates Self — the exact-set assertion above is this
+    // epic's real oracle.
+    it('UM route evidence: GET /users/:id returns 200 for the viewer’s own record', async () => {
       await request(app.getHttpServer())
         .get(`/users/${ids.Alice}`)
         .set('authorization', asPersona('Alice'))
@@ -216,7 +243,16 @@ describe('Access Control Phase 0 — audience resolution over GET /users/:id (e2
   });
 
   describe('ACF-AU-02 · Direct manager reads a report', () => {
-    it('returns 200 for a live direct reports-to edge', async () => {
+    it('resolves the audience set to exactly {reporting} over a live direct edge', async () => {
+      const facade = app.get(AccessControlFacade);
+
+      const audiences = await facade.resolveAudiences(ids.Bob, [ids.Alice]);
+
+      expectAudienceLabels(audiences, ids.Alice, ['reporting']);
+    });
+
+    // UM-owned route evidence only (R-PLAT2-03): see the ACF-AU-01 note above.
+    it('UM route evidence: GET /users/:id returns 200 for a live direct reports-to edge', async () => {
       await request(app.getHttpServer())
         .get(`/users/${ids.Alice}`)
         .set('authorization', asPersona('Bob'))
@@ -225,7 +261,16 @@ describe('Access Control Phase 0 — audience resolution over GET /users/:id (e2
   });
 
   describe('ACF-AU-03 · Manager’s manager reads through the chain', () => {
-    it('returns 200 through the recursive direct walk, with no stored pointer', async () => {
+    it('resolves the audience set to exactly {reporting} through the recursive walk, with no stored pointer', async () => {
+      const facade = app.get(AccessControlFacade);
+
+      const audiences = await facade.resolveAudiences(ids.Carol, [ids.Alice]);
+
+      expectAudienceLabels(audiences, ids.Alice, ['reporting']);
+    });
+
+    // UM-owned route evidence only (R-PLAT2-03): see the ACF-AU-01 note above.
+    it('UM route evidence: GET /users/:id returns 200 through the recursive direct walk', async () => {
       await request(app.getHttpServer())
         .get(`/users/${ids.Alice}`)
         .set('authorization', asPersona('Carol'))
@@ -234,7 +279,16 @@ describe('Access Control Phase 0 — audience resolution over GET /users/:id (e2
   });
 
   describe('ACF-AU-04 · Assigned People Partner reads the profile', () => {
-    it('returns 200 from the people_partner assignment alone', async () => {
+    it('resolves the audience set to exactly {pp} from the assignment fact alone', async () => {
+      const facade = app.get(AccessControlFacade);
+
+      const audiences = await facade.resolveAudiences(ids.Paula, [ids.Alice]);
+
+      expectAudienceLabels(audiences, ids.Alice, ['pp']);
+    });
+
+    // UM-owned route evidence only (R-PLAT2-03): see the ACF-AU-01 note above.
+    it('UM route evidence: GET /users/:id returns 200 from the people_partner assignment alone', async () => {
       await request(app.getHttpServer())
         .get(`/users/${ids.Alice}`)
         .set('authorization', asPersona('Paula'))
@@ -312,6 +366,30 @@ describe('Access Control Phase 0 — audience resolution over GET /users/:id (e2
           clearTimeout(hangTimer);
         }
       }
+    });
+  });
+
+  describe('ACF-FC-05 · Deactivated target yields an empty audience set', () => {
+    it('resolves an empty set for a deactivated target instead of the Colleague floor', async () => {
+      const facade = app.get(AccessControlFacade);
+
+      const audiences = await facade.resolveAudiences(ids.Colin, [
+        ids.InactiveMgr,
+      ]);
+
+      expectAudienceLabels(audiences, ids.InactiveMgr, []);
+    });
+  });
+
+  describe('ACF-FC-05 · Deactivated viewer yields an empty audience set', () => {
+    it('resolves an empty set for every target when the viewer is deactivated', async () => {
+      const facade = app.get(AccessControlFacade);
+
+      const audiences = await facade.resolveAudiences(ids.InactiveMgr, [
+        ids.Alice,
+      ]);
+
+      expectAudienceLabels(audiences, ids.Alice, []);
     });
   });
 
