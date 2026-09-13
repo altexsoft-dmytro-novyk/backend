@@ -538,6 +538,23 @@ describe('s42d-ds-06 · root resolves reporting write over every seeded member o
     expect(res.status).toBe(200);
     expectExactS1CardEnvelope(res.body, s1CardOf(row!), true);
   });
+
+  // E4-C04a (test-design-epic-platform-4.md) — the dev-spine half of the
+  // "root's own card" case. `db:dev:seed-org` writes edges FOR every seeded
+  // member ONTO root; it writes no edge for root itself, so root's own
+  // audience over its own card is `self`, not `reporting`, exactly as the
+  // production-shaped s42a-op-04 Test 4 proves on a clean bootstrap.
+  it('s42d-ds-06 Test 5 · root reads its own card → 200, canEdit false (self, not reporting)', async () => {
+    const p = requireProvisioning();
+    const row = await testApp.prisma.user.findUnique({
+      where: { id: p.root.id },
+    });
+
+    const res = await getUser(p.root.id, p.root.id);
+
+    expect(res.status).toBe(200);
+    expectExactS1CardEnvelope(res.body, s1CardOf(row!), false);
+  });
 });
 
 // ───────────────────────────────────────────────────────────────────────────
