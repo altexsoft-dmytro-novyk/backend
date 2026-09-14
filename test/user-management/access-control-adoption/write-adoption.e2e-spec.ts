@@ -141,6 +141,32 @@ describe('UMAC-2 Stage 2 — PATCH / PUT photo write-path gates (e2e)', () => {
       expect(res.status).toBe(401);
     });
 
+    // PLAT-E4-C03b(1) / PM-AD-24: the deactivated-caller 401 half of the
+    // umac-11 oracle, evidenced here against a normal (not missing) target —
+    // umac-11 Test 6 covers the same caller shape only against a missing
+    // target id.
+    it('UMAC-07 Test 6 — deactivated caller (isActive: false) PATCH → 401', async () => {
+      const target = await fx.user('umac07-target-deact', {
+        position: 'Engineer',
+      });
+      const deactivatedCaller = await fx.user('umac07-deactivated', {
+        isActive: false,
+      });
+      // An inactive `User` establishes no session — the real session resolver
+      // returns `null` for a principal that is not an *active* `User`, so the
+      // guard rejects with `401` before any audience/section question, exactly
+      // as the GET case does (`read-denial.e2e-spec.ts` UMAC-05 Test 2).
+
+      const res = await request(testApp.app.getHttpServer())
+        .patch(`/users/${target.id}`)
+        .set('authorization', bearer(deactivatedCaller.id))
+        .send({ position: 'Ghost Engineer' });
+      expect(res.status).toBe(401);
+
+      const readBack = await getUser(target.id, target.id);
+      expect(readBack.body).toMatchObject({ data: { position: 'Engineer' } });
+    });
+
     it('UMAC-07 Test 1 — reporting-line manager PATCHes a report’s profile:identity → 200, change persists', async () => {
       // Variant A: the reporting edge alone gives `canAccessSection('profile:identity') ===
       // 'write'`, which is the whole gate. No FR grant is seeded — the identity

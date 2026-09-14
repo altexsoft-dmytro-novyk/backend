@@ -32,6 +32,13 @@ import {
  *     s42d-ds-03-rerun-is-additive-only.md
  *     s42d-ds-04-department-with-no-active-members-is-skipped.md
  *     s42d-ds-05-dev-grant-root-retired-and-create-root-repointed.md
+ *     s42d-ds-07-seeded-edges-are-journaled.md
+ *
+ * ── s42d-ds-07 (2026-09-12) ─────────────────────────────────────────────────
+ * AF-3's development-fixture journal exception was DECLINED 2026-09-12 (PO +
+ * Architect). Every edge the script writes must carry exactly one
+ * `kind: 'manager'` `access_journal` row in the same transaction, in the
+ * `assignManager` shape. Expected RED against `de508c9`, which writes none.
  *
  * ── HARNESS SHAPE (AF-1: DB-level, subprocess-only; mirrors
  * `s42a-op-bootstrap-canonical-set.e2e-spec.ts` /
@@ -239,6 +246,62 @@ async function relationshipRowsFor(userIds: string[]): Promise<RelRow[]> {
     userIds,
   );
   return rows;
+}
+
+interface ManagerJournalRow {
+  actorUserId: string;
+  subjectUserId: string;
+  kind: string;
+  before: unknown;
+  after: {
+    relationshipId: string;
+    userId: string;
+    type: string;
+    reportsToUserId: string | null;
+  } | null;
+  idempotencyKey: string;
+}
+
+/** Every `kind = 'manager'` journal row whose subject is one of `userIds`. */
+async function managerJournalRowsFor(
+  userIds: string[],
+): Promise<ManagerJournalRow[]> {
+  if (userIds.length === 0) return [];
+  return sql<ManagerJournalRow>(
+    `SELECT "actorUserId", "subjectUserId", kind::text AS kind, "before", "after", "idempotencyKey"
+       FROM "access_journal"
+      WHERE kind = 'manager' AND "subjectUserId" = ANY($1::text[])
+      ORDER BY "subjectUserId", "idempotencyKey"`,
+    userIds,
+  );
+}
+
+/**
+ * s42d-ds-07 · asserts `user`'s one `direct` edge has exactly one matching
+ * `manager` journal row in the `assignManager` shape, with `actorId` as actor.
+ */
+async function expectEdgeJournaledOnce(
+  user: User,
+  actorId: string,
+): Promise<void> {
+  const edge = await prisma.relationship.findFirst({
+    where: { userId: user.id, type: 'direct' },
+  });
+  expect(edge).not.toBeNull();
+  const rows = await managerJournalRowsFor([user.id]);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({
+    actorUserId: actorId,
+    subjectUserId: user.id,
+    kind: 'manager',
+    before: null,
+    after: {
+      relationshipId: edge!.id,
+      userId: user.id,
+      type: 'direct',
+      reportsToUserId: edge!.reportsToUserId,
+    },
+  });
 }
 
 /**
@@ -724,6 +787,39 @@ describe('s42d-ds-02 & s42d-ds-03 · the two-level spine over a real, multi-depa
     });
   });
 
+  // ─── s42d-ds-07 Test 1 — run 1's edges are journaled ─────────────────────
+  describe('s42d-ds-07 · run 1 · every edge the script wrote is journaled exactly once', () => {
+    it('s42d-ds-07 Test 1 · one manager row per script-written edge (actor root, before null, after = the edge); the admin edge keeps its single row; 8 in total', async () => {
+      for (const user of [
+        alphaA,
+        alphaB,
+        alphaC,
+        soloUser,
+        betaLead,
+        gammaLead,
+        gammaMember,
+      ]) {
+        await expectEdgeJournaledOnce(user, root.id);
+      }
+      // The administrator-written edge: exactly the one row the route wrote.
+      await expectEdgeJournaledOnce(betaMember, root.id);
+
+      const all = await managerJournalRowsFor(
+        [
+          alphaA,
+          alphaB,
+          alphaC,
+          soloUser,
+          betaLead,
+          betaMember,
+          gammaLead,
+          gammaMember,
+        ].map((u) => u.id),
+      );
+      expect(all).toHaveLength(8);
+    });
+  });
+
   // ─── AF-4 fixture: deactivate Gamma's lead, between run 1 and run 2 ──────
   describe('AF-4 fixture · gammaLead is deactivated by a direct, minimal Prisma write (fixture setup only)', () => {
     it('gammaLead.isActive is confirmed false by a direct read before the rerun', async () => {
@@ -739,9 +835,22 @@ describe('s42d-ds-02 & s42d-ds-03 · the two-level spine over a real, multi-depa
   // ─── run 2: a rerun with NO new population import ────────────────────────
   describe('run 2 · a rerun with no new population import', () => {
     let beforeSnapshot: RelRow[] = [];
+    let journalBefore: ManagerJournalRow[] = [];
+    const run2UserIds = () =>
+      [
+        alphaA,
+        alphaB,
+        alphaC,
+        soloUser,
+        betaLead,
+        betaMember,
+        gammaLead,
+        gammaMember,
+      ].map((u) => u.id);
 
     beforeAll(async () => {
       beforeSnapshot = await snapshotAll();
+      journalBefore = await managerJournalRowsFor(run2UserIds());
       const run = await runSeedOrg({ ROOT_WORK_EMAIL });
       requireSeedOrgRan(run);
       expect(run.exitCode).toBe(0);
@@ -750,6 +859,11 @@ describe('s42d-ds-02 & s42d-ds-03 · the two-level spine over a real, multi-depa
     it('s42d-ds-03 Test 1 · zero new rows — every row is byte-identical to the pre-rerun snapshot', async () => {
       const after = await snapshotAll();
       expect(after).toEqual(beforeSnapshot);
+    });
+
+    it('s42d-ds-07 Test 2 · a no-op rerun writes no journal row', async () => {
+      expect(journalBefore).toHaveLength(8);
+      expect(await managerJournalRowsFor(run2UserIds())).toEqual(journalBefore);
     });
 
     it('s42d-ds-03 Test 4 · Gamma is not auto-repaired (AF-4) — gammaMember still reports to the now-inactive former lead', async () => {
@@ -772,9 +886,22 @@ describe('s42d-ds-02 & s42d-ds-03 · the two-level spine over a real, multi-depa
   // ─── run 3: a rerun after a new population-import batch ──────────────────
   describe('run 3 · a rerun after a new population-import batch', () => {
     let beforeSnapshot: RelRow[] = [];
+    let journalBefore: ManagerJournalRow[] = [];
+    const run1UserIds = () =>
+      [
+        alphaA,
+        alphaB,
+        alphaC,
+        soloUser,
+        betaLead,
+        betaMember,
+        gammaLead,
+        gammaMember,
+      ].map((u) => u.id);
 
     beforeAll(async () => {
       beforeSnapshot = await snapshotAll();
+      journalBefore = await managerJournalRowsFor(run1UserIds());
 
       const dept = (persona: string) => `${importMarker}-${persona}`;
       const csv2 = [
@@ -863,6 +990,20 @@ describe('s42d-ds-02 & s42d-ds-03 · the two-level spine over a real, multi-depa
       // Every row from run 1 + run 2 is untouched.
       const after = await snapshotAll();
       expect(after).toEqual(beforeSnapshot);
+    });
+
+    it('s42d-ds-07 Test 3 · only the three new edges gain a journal row; earlier rows are untouched; 11 in total', async () => {
+      for (const user of [alphaD, deltaLead, deltaMember]) {
+        await expectEdgeJournaledOnce(user, root.id);
+      }
+      expect(await managerJournalRowsFor(run1UserIds())).toEqual(journalBefore);
+      const all = await managerJournalRowsFor([
+        ...run1UserIds(),
+        alphaD.id,
+        deltaLead.id,
+        deltaMember.id,
+      ]);
+      expect(all).toHaveLength(11);
     });
   });
 });

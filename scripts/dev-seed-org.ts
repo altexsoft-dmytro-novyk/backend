@@ -13,11 +13,18 @@
 // an existing edge, however it got there, is never overwritten, moved, or
 // deleted (same philosophy as `access-control-bootstrap.ts`'s `ensureGrants`).
 //
-// Direct, transactional Prisma writes — the same idiom `dev-grant-root.ts` and
-// `access-control-bootstrap.ts` already use for their own tables — bypassing
-// `AssignManagerAction`/`OrgRelationshipService`. No `AccessJournal` row is
-// written for a seeded edge (spec-4-2d Ask First AF-3): this is fake dev data,
-// not an administrator action.
+// Direct, transactional Prisma writes — the same idiom
+// `access-control-bootstrap.ts` already uses for its own tables — bypassing
+// `AssignManagerAction`/`OrgRelationshipService`.
+//
+// CORRECTED 2026-09-12 (PO + Architect, Anna Pikula — spec-4-2d AF-3's
+// development-fixture exception DECLINED): a seeded edge is still a change to a
+// person's manager (§2.1 "every change is journaled per 3.4"; PM/AD-29). Every
+// edge is written together with exactly one `AccessJournal` row in the same
+// transaction, in `OrgRelationshipRepository.assignManager`'s shape
+// (`kind: 'manager'`, `before: NULL`, `after` = the edge snapshot, the same
+// idempotency-key derivation, `skipDuplicates`). The actor is root, matching
+// the bootstrap's own journaled full-profile grant. Scenario: s42d-ds-07.
 //
 // Run AFTER `npm run db:seed`, `npm run db:bootstrap:access-control`, AND
 // `npm run db:import:population` — this script reads `DepartmentMembership`
@@ -37,7 +44,9 @@
 // `db:seed && db:bootstrap:access-control` (spec-4-2d Code Map).
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient } from '../src/generated/prisma/client';
+import { uuidv7 } from 'uuidv7';
+import { Prisma, PrismaClient } from '../src/generated/prisma/client';
+import { accessJournalIdempotencyKey } from '../src/user-management/infrastructure/access-journal-idempotency';
 
 const normalizeWorkEmail = (workEmail: string) =>
   workEmail.trim().toLowerCase();
@@ -176,17 +185,50 @@ async function main(): Promise<void> {
       return;
     }
 
-    await prisma.$transaction(
-      pendingEdges.map(({ userId, reportsToUserId }) =>
-        prisma.relationship.create({
-          data: { userId, type: 'direct', reportsToUserId },
-        }),
-      ),
-    );
+    // The edge ids are generated here so each journal `after` snapshot and
+    // idempotency key can reference its edge inside the same transaction.
+    const edges = pendingEdges.map((edge) => ({
+      ...edge,
+      relationshipId: uuidv7(),
+    }));
+    await prisma.$transaction([
+      prisma.relationship.createMany({
+        data: edges.map(({ relationshipId, userId, reportsToUserId }) => ({
+          id: relationshipId,
+          userId,
+          type: 'direct' as const,
+          reportsToUserId,
+        })),
+      }),
+      prisma.accessJournal.createMany({
+        data: edges.map(({ relationshipId, userId, reportsToUserId }) => ({
+          id: uuidv7(),
+          actorUserId: root.id,
+          subjectUserId: userId,
+          kind: 'manager' as const,
+          before: Prisma.DbNull,
+          after: {
+            relationshipId,
+            userId,
+            type: 'direct',
+            reportsToUserId,
+          },
+          idempotencyKey: accessJournalIdempotencyKey(
+            root.id,
+            userId,
+            'manager',
+            relationshipId,
+            'create',
+          ),
+        })),
+        skipDuplicates: true,
+      }),
+    ]);
 
     console.log(
-      `dev-seed-org: created ${pendingEdges.length} direct relationship ` +
-        `row(s) across ${rosterByDepartment.size} department(s).`,
+      `dev-seed-org: created ${edges.length} direct relationship ` +
+        `row(s), each with its AccessJournal row, across ` +
+        `${rosterByDepartment.size} department(s).`,
     );
   } finally {
     await prisma.$disconnect();

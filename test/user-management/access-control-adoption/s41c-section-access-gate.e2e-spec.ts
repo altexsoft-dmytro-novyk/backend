@@ -148,30 +148,32 @@ describe('PLAT-E4-S4.1c Stage 2 — section-access gate on GET / PATCH /users/:i
       expectExactS1CardEnvelope(res.body, s1CardOf(target), true);
     });
 
-    it('s41c-sag-01 Test 5 · deactivated target → 403, leak-free body', async () => {
+    // SUPERSEDED 2026-09-12 by umac-11 (PM/AD-24, CONFLICT-UM-01): a hidden
+    // target is `404`, decided before the section check. Was `403`.
+    it('s41c-sag-01 Test 5 · deactivated target → 404, leak-free body (umac-11)', async () => {
       const viewer = await fx.user('sag01-viewer');
       const target = await fx.user('sag01-inactive-target', {
         isActive: false,
       });
-      // T is not an active `User`, so V's audience set over T is empty →
-      // `canAccessSection` → 'none' (rank 0) → neither requirement is reached.
+      // T is not an active `User` → hidden target → `SectionAccessGuard`
+      // answers `404` before `hasSectionAccess` is asked.
 
       const res = await getUser(target.id, viewer.id);
 
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
       expectLeakFreeBody(res.body, target);
     });
 
-    it('s41c-sag-01 Test 6 · unknown target id → 403, leak-free body', async () => {
+    // SUPERSEDED 2026-09-12 by umac-11 (PM/AD-24, CONFLICT-UM-01). Was `403`.
+    it('s41c-sag-01 Test 6 · unknown target id → 404, leak-free body (umac-11)', async () => {
       const viewer = await fx.user('sag01-viewer');
       // A freshly generated, well-formed id that matches no row.
       const unknownTargetId = uuidv7();
 
       const res = await getUser(unknownTargetId, viewer.id);
 
-      // 403-not-404 is the 2026-09-01 product decision recorded in umac-05;
-      // 4.1c does not revisit it.
-      expect(res.status).toBe(403);
+      // The 2026-09-01 empty-audience 403 decision is superseded by PM/AD-24.
+      expect(res.status).toBe(404);
       expectLeakFreeBody(res.body);
     });
   });
@@ -418,19 +420,22 @@ describe('PLAT-E4-S4.1c Stage 2 — section-access gate on GET / PATCH /users/:i
       await expect(cityOf(target.id)).resolves.toBe('Krakow');
     });
 
-    it('s41c-sag-04 Test 5 · a `none` target stays closed to a grant holder → 403 (carried over from umac-10 Test 3)', async () => {
+    // Status code SUPERSEDED 2026-09-12 by umac-11 (PM/AD-24, CONFLICT-UM-01):
+    // an inactive target is a hidden target → `404`, before the section check.
+    // The claim under test is unchanged: the grant opens nothing, row untouched.
+    it('s41c-sag-04 Test 5 · a `none` (inactive) target stays closed to a grant holder → 404, row unchanged (umac-11)', async () => {
       const editor = await fx.user('sag04-editor');
       const target = await fx.user('sag04-inactive-target', {
         city: 'Krakow',
         isActive: false,
       });
       await fx.grantFunctionalRole(editor.id, ['user-management:edit']);
-      // `canAccessSection` returns 'none' for an empty audience set, and 'none'
-      // reaches no requirement.
+      // Not an active `User` → hidden target → `404` before any section or
+      // feature question, so the grant is never consulted.
 
       const res = await patch(target.id, editor.id, { city: 'Berlin' });
 
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
       await expect(cityOf(target.id)).resolves.toBe('Krakow');
     });
   });
